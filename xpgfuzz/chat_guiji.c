@@ -51,10 +51,10 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
 
     url = "https://api.siliconflow.cn/v1/chat/completions";
 
-    char *auth_header = "Authorization: Bearer " GUIJI_TOKEN;
-    char *content_header = "Content-Type: application/json";
-    char *accept_header = "Accept: application/json";
-    char *data = NULL;
+    char *auth_header = "Authorization: Bearer " GUIJI_TOKEN;  //携带者令牌
+    char *content_header = "Content-Type: application/json";  //输入是json
+    char *accept_header = "Accept: application/json";       //接受json响应
+    char *data = NULL;  
 
     asprintf(&data, "{\"model\": \"Qwen/QwQ-32B\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
     
@@ -93,18 +93,10 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
                     json_object *first_choice = json_object_array_get_idx(choices, 0);
                     const char *data;
 
-                    // The answer begins with a newline character, so we remove it
-                    if (strcmp(model, "instruct") == 0)
-                    {
-                        json_object *jobj4 = json_object_object_get(first_choice, "text");
-                        data = json_object_get_string(jobj4);
-                    }
-                    else
-                    {
-                        json_object *jobj4 = json_object_object_get(first_choice, "message");
-                        json_object *jobj5 = json_object_object_get(jobj4, "content");
-                        data = json_object_get_string(jobj5);
-                    }
+                    json_object *jobj4 = json_object_object_get(first_choice, "message");
+                    json_object *jobj5 = json_object_object_get(jobj4, "content");
+                    data = json_object_get_string(jobj5);
+                    
                     if (data[0] == '\n')
                         data++;
                     answer = strdup(data);
@@ -140,10 +132,6 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
 
 int main()
 {
-    // WARNING: Ensure you replace "YOUR_OPENAI_API_TOKEN_HERE" above.
-    
-    // Example Prompt: A simple user message formatted for the "chat" model
-    // Note: The prompt MUST be a valid JSON array of messages, escaped correctly.
     char *chat_prompt = "[{\"role\": \"user\", \"content\": \"网络协议的特点是啥？\"}]";
     
     char *result = NULL;
@@ -152,7 +140,7 @@ int main()
     printf("Model:Qwen/QwQ-32B (Chat Mode)\n");
     printf("Prompt: %s\n", chat_prompt);
 
-    // Call the function with model="chat", 3 tries, and temperature=0.7
+    
     result = chat_with_llm(chat_prompt, "Qwen/QwQ-32B", 3, 0.7);
 
     printf("\n--- LLM Response ---\n");
