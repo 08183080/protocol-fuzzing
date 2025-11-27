@@ -1,0 +1,7 @@
+POST /api/library/add HTTP/1.1
+Host: 127.0.0.1
+Content-Type: application/json
+Content-Length: 178
+User-Agent: daapd-uploader/0.1
+
+{"title":"陌生人の歌","artist":"测试歌手","album":"测试专辑","duration":215,"path":"/music/test/track01.mp3","bitrate":320}

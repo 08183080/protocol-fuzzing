@@ -1,0 +1,9 @@
+PUT /hello.txt HTTP/1.1
+Host: 127.0.0.1:8080
+User-Agent: expecter/1.0
+Expect: 100-continue
+Connection: close
+Content-Type: application/octet-stream
+Content-Length: 10
+
+abc
