@@ -12,8 +12,9 @@ We give at most 400 for the examples and 1300 for the stall prompt
 Similarly 1700 is for the example request in the seed enrichment
 */
 
-
 #define GUIJI_TOKEN "sk-euzveulqwqbseottflzsjkswoaifhunhfmwjhqpdcmejvzaw"
+#define DMX_CN_TOKEN "sk-8zHsIMvjPzEQNunLVrvn8W4OnklFLBJ6ZYj1DPnTS1NQXaRK"
+#define DMX_COM_TOKEN "sk-u9cz1IP6akgZlvFI0bILSOqGkDSp5hEo4O7RcTKZDXiXlADs"
 
 #define MAX_PROMPT_LENGTH 2048
 #define EXAMPLES_PROMPT_LENGTH 400
@@ -23,7 +24,7 @@ Similarly 1700 is for the example request in the seed enrichment
 #define TEMPLATE_CONSISTENCY_COUNT 5
 
 // Maximum amount of retries for the state stall
-#define STALL_RETRIES 2
+#define STALL_RETRIES 1
 
 // Maximum amount of tries to get the grammars
 #define GRAMMAR_RETRIES 5
@@ -96,4 +97,3 @@ message_set_list message_combinations(khash_t(strSet)* sequence, int size);
 struct queue_entry *llm_guided_mutation(struct queue_entry *seed);  
 char *construct_prompt_for_seed_mutation(char *protocol_name, char *seed_content);
 #endif // __CHAT_LLM_H
-

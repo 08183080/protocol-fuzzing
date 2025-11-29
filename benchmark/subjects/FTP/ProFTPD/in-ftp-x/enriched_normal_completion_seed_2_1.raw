@@ -1,4 +1,5 @@
 USER ubuntu
+HELP
 PASS ubuntu
 MKD test
 CWD test

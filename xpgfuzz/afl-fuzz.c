@@ -413,14 +413,14 @@ void setup_llm_grammars()
   {
     klist_t(gram) *grammar_list = kl_init(gram);
 
-    char *templates_answer = chat_with_llm(templates_prompt, "Qwen/QwQ-32B", GRAMMAR_RETRIES, 0);
+    char *templates_answer = chat_with_llm(templates_prompt, "gpt-3.5-turbo", GRAMMAR_RETRIES, 0);
     if (templates_answer == NULL)
       goto free_templates_answer;
 
     // printf("## Answer from LLM:\n %s\n", templates_answer);
     char *remaining_prompt = construct_prompt_for_remaining_templates(protocol_name, first_question, templates_answer);
     // printf("remaining prompt is:\n %s\n", remaining_prompt);
-    char *remaining_templates = chat_with_llm(remaining_prompt, "Qwen/QwQ-32B", GRAMMAR_RETRIES, 0);
+    char *remaining_templates = chat_with_llm(remaining_prompt, "gpt-3.5-turbo", GRAMMAR_RETRIES, 0);
     if (remaining_templates == NULL)
       goto free_remaining;
 
@@ -444,7 +444,25 @@ void setup_llm_grammars()
     {
       json_object *jobj = kl_val(iter);
 
+      // Skip invalid or non-array JSON objects
+      if (jobj == NULL || json_object_get_type(jobj) != json_type_array)
+      {
+        continue;
+      }
+
+      // Check if array has at least one element
+      if (json_object_array_length(jobj) == 0)
+      {
+        continue;
+      }
+
       json_object *header = json_object_array_get_idx(jobj, 0);
+      
+      // Skip if header is NULL or not a string
+      if (header == NULL || json_object_get_type(header) != json_type_string)
+      {
+        continue;
+      }
 
       int absent;
 
@@ -459,7 +477,13 @@ void setup_llm_grammars()
 
       for (int i = 1; i < json_object_array_length(jobj); i++)
       {
-        const char *v = json_object_get_string(json_object_array_get_idx(jobj, i));
+        json_object *field_obj = json_object_array_get_idx(jobj, i);
+        // Skip if field is NULL or not a string
+        if (field_obj == NULL || json_object_get_type(field_obj) != json_type_string)
+        {
+          continue;
+        }
+        const char *v = json_object_get_string(field_obj);
         khash_t(field_table) *field_table = kh_value(const_table, k);
         khiter_t field_k = kh_put(field_table, field_table, v, &absent);
         if (absent)
@@ -6915,7 +6939,7 @@ AFLNET_REGIONS_SELECTION:;
 
         char *stall_prompt = construct_prompt_stall(protocol_name, examples, history);
         // printf("Got prompt:\n\n%s\n",stall_prompt);
-        char *stall_response = chat_with_llm(stall_prompt, "Qwen/QwQ-32B", STALL_RETRIES, 1.5);
+        char *stall_response = chat_with_llm(stall_prompt, "gpt-3.5-turbo", STALL_RETRIES, 1.5);
         // printf("Got response:\n\n%s\n",stall_response);
 
         {

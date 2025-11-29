@@ -48,12 +48,30 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     CURLcode res = CURLE_OK;
     char *answer = NULL;
     char *url = NULL;
-    url = "https://api.siliconflow.cn/v1/chat/completions";
-    char *auth_header = "Authorization: Bearer " GUIJI_TOKEN;
+    // url = "https://api.siliconflow.cn/v1/chat/completions";
+    url = "https://www.dmxapi.com/v1/chat/completions";
+    char *auth_header = "Authorization: Bearer " DMX_COM_TOKEN;//GUIJI_TOKEN;
     char *content_header = "Content-Type: application/json";
     char *accept_header = "Accept: application/json";
     char *data = NULL;
-    asprintf(&data, "{\"model\": \"Qwen/QwQ-32B\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
+    
+    // Build JSON request properly using json-c library
+    json_object *request_obj = json_object_new_object();
+    json_object_object_add(request_obj, "model", json_object_new_string("gpt-3.5-turbo"));
+    
+    // Create messages array
+    json_object *messages_array = json_object_new_array();
+    json_object *message_obj = json_object_new_object();
+    json_object_object_add(message_obj, "role", json_object_new_string("user"));
+    json_object_object_add(message_obj, "content", json_object_new_string(prompt));
+    json_object_array_add(messages_array, message_obj);
+    json_object_object_add(request_obj, "messages", messages_array);
+    
+    json_object_object_add(request_obj, "max_tokens", json_object_new_int(MAX_TOKENS));
+    json_object_object_add(request_obj, "temperature", json_object_new_double(temperature));
+    
+    data = (char *)json_object_to_json_string(request_obj);
+    data = strdup(data); // Make a copy since json_object will be freed later
     curl_global_init(CURL_GLOBAL_DEFAULT);
     do
     {
@@ -116,6 +134,11 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
         free(chunk.memory);
     } while ((res != CURLE_OK || answer == NULL) && (--tries > 0));
 
+    // Free JSON object and data
+    if (request_obj != NULL)
+    {
+        json_object_put(request_obj);
+    }
     if (data != NULL)
     {
         free(data);
@@ -413,7 +436,18 @@ void extract_message_grammars(char *answers, klist_t(gram) * grammar_list)
 
         // conver temp to json object and save it to the list
         json_object *jobj = json_tokener_parse(temp);
+        // Only add valid JSON arrays to the list
+        if (jobj != NULL && json_object_get_type(jobj) == json_type_array)
+        {
         *kl_pushp(gram, grammar_list) = jobj;
+        }
+        else
+        {
+            // Free invalid JSON object
+            if (jobj != NULL)
+                json_object_put(jobj);
+        }
+        ck_free(temp);
 
         // printf("%s\n", temp);
     }
@@ -898,12 +932,122 @@ int min(int a, int b) {
     return a < b ? a : b;
 }
 
+// Extract pure sequence from LLM response (remove explanations, markdown, etc.)
+static char *extract_sequence_from_response(const char *response) {
+    if (!response) return NULL;
+    
+    // Try to find code blocks first (```)
+    const char *code_start = strstr(response, "```");
+    if (code_start) {
+        code_start += 3; // Skip ```
+        // Skip language identifier if present
+        while (*code_start == '\n' || *code_start == ' ' || 
+               (*code_start >= 'a' && *code_start <= 'z') ||
+               (*code_start >= 'A' && *code_start <= 'Z')) {
+            code_start++;
+        }
+        const char *code_end = strstr(code_start, "```");
+        if (code_end) {
+            int len = code_end - code_start;
+            char *result = malloc(len + 1);
+            strncpy(result, code_start, len);
+            result[len] = '\0';
+            return result;
+        }
+    }
+    
+    // Try to find sequence between "Modified sequence:" or similar markers
+    const char *markers[] = {
+        "Modified sequence:",
+        "modified sequence:",
+        "Sequence:",
+        "sequence:",
+        "Output:",
+        "output:"
+    };
+    
+    for (int i = 0; i < sizeof(markers) / sizeof(markers[0]); i++) {
+        const char *marker = strstr(response, markers[i]);
+        if (marker) {
+            marker += strlen(markers[i]);
+            // Skip whitespace and newlines
+            while (*marker == ' ' || *marker == '\n' || *marker == '\r' || *marker == '\t') {
+                marker++;
+            }
+            
+            // Find the end (either end of string or next section)
+            const char *end = marker;
+            while (*end != '\0' && 
+                   !(end[0] == '\n' && (strstr(end, "Note:") || strstr(end, "---") || strstr(end, "**")))) {
+                end++;
+            }
+            
+            int len = end - marker;
+            if (len > 0) {
+                char *result = malloc(len + 1);
+                strncpy(result, marker, len);
+                result[len] = '\0';
+                return result;
+            }
+        }
+    }
+    
+    // If no markers found, try to extract lines that look like commands
+    // (lines that start with uppercase letters, possibly with parameters)
+    char *result = malloc(strlen(response) + 1);
+    char *out = result;
+    const char *in = response;
+    int in_command_block = 0;
+    
+    while (*in) {
+        // Look for patterns like "USER", "PASS", "CWD", etc. at start of line
+        if ((*in == '\n' || in == response) && 
+            ((in[1] >= 'A' && in[1] <= 'Z') || 
+             (in[1] >= 'a' && in[1] <= 'z'))) {
+            in_command_block = 1;
+        }
+        
+        if (in_command_block) {
+            if (*in == '\n' && 
+                !((in[1] >= 'A' && in[1] <= 'Z') || 
+                  (in[1] >= 'a' && in[1] <= 'z') ||
+                  (in[1] == ' ' || in[1] == '\t') ||
+                  (in[1] == '\0'))) {
+                // End of command block
+                break;
+            }
+            *out++ = *in;
+        }
+        in++;
+    }
+    *out = '\0';
+    
+    // If we extracted something meaningful, return it
+    if (strlen(result) > 10) {
+        return result;
+    }
+    
+    free(result);
+    // Last resort: return original response
+    return strdup(response);
+}
+
 char *enrich_sequence(char *sequence, khash_t(strSet) * missing_message_types)
 {
     const char *prompt_template =
-        "The following is one sequence of client requests:\\n"
-        "%.*s\\n"
-        "Please add the %.*s client requests in the proper locations, and the modified sequence of client requests is:";
+        "CRITICAL: Return ONLY the modified sequence, NO explanations, NO analysis, NO markdown.\\n\\n"
+        "Original sequence:\\n"
+        "%.*s\\n\\n"
+        "Task: Add these message types: %.*s\\n"
+        "Insert them at appropriate locations.\\n\\n"
+        "Output format: Return ONLY the sequence, one command per line, like this:\\n"
+        "```\\n"
+        "USER username\\n"
+        "PASS password\\n"
+        "CWD /path\\n"
+        "QUIT\\n"
+        "```\\n\\n"
+        "Modified sequence:";
 
     int missing_fields_len = 0;
     int missing_fields_capacity = 100;
@@ -954,5 +1098,51 @@ char *enrich_sequence(char *sequence, khash_t(strSet) * missing_message_types)
 
     free(prompt);
 
-    return response;
+    if (response == NULL) {
+        return NULL;
+    }
+
+    // Extract pure sequence from response (remove explanations, markdown, etc.)
+    char *clean_response = extract_sequence_from_response(response);
+    free(response);
+    
+    if (clean_response == NULL) {
+        return NULL;
+    }
+    
+    // Remove markdown code block markers if still present
+    char *cleaned = clean_response;
+    if (cleaned[0] == '`' && cleaned[1] == '`' && cleaned[2] == '`') {
+        cleaned += 3;
+        // Skip language identifier
+        while (*cleaned == '\n' || *cleaned == ' ' || 
+               (*cleaned >= 'a' && *cleaned <= 'z') ||
+               (*cleaned >= 'A' && *cleaned <= 'Z')) {
+            cleaned++;
+        }
+        // Remove trailing ```
+        char *end = strstr(cleaned, "```");
+        if (end) {
+            *end = '\0';
+        }
+    }
+    
+    // Trim whitespace
+    while (*cleaned == ' ' || *cleaned == '\n' || *cleaned == '\r' || *cleaned == '\t') {
+        cleaned++;
+    }
+    char *end = cleaned + strlen(cleaned) - 1;
+    while (end > cleaned && (*end == ' ' || *end == '\n' || *end == '\r' || *end == '\t')) {
+        *end = '\0';
+        end--;
+    }
+    
+    // If we modified the pointer, need to create new string
+    if (cleaned != clean_response) {
+        char *result = strdup(cleaned);
+        free(clean_response);
+        return result;
+    }
+    
+    return clean_response;
 }

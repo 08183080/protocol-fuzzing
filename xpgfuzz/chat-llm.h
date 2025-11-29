@@ -24,10 +24,10 @@ Similarly 1700 is for the example request in the seed enrichment
 #define TEMPLATE_CONSISTENCY_COUNT 5
 
 // Maximum amount of retries for the state stall
-#define STALL_RETRIES 2
+#define STALL_RETRIES 1
 
 // Maximum amount of tries to get the grammars
-#define GRAMMAR_RETRIES 2
+#define GRAMMAR_RETRIES 5
 
 // Maximum amount
 #define MESSAGE_TYPE_RETRIES 5
