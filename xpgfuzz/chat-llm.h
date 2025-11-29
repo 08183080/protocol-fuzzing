@@ -13,7 +13,6 @@ Similarly 1700 is for the example request in the seed enrichment
 */
 
 #define OPENAI_TOKEN "sk-AIQaabGrgQ4TYkxAU6msW77ojWeHLf1MUpwvaOkz9Ql0LYvo"
-#define GUIJI_TOKEN  "sk-euzveulqwqbseottflzsjkswoaifhunhfmwjhqpdcmejvzaw"
 
 #define MAX_PROMPT_LENGTH 2048
 #define EXAMPLES_PROMPT_LENGTH 400
@@ -92,4 +91,8 @@ void write_new_seeds(char *enriched_file, char *contents);
 char *unescape_string(const char *input);
 char *format_string(char *state_string);
 message_set_list message_combinations(khash_t(strSet)* sequence, int size);
+// 在现有函数声明后添加  
+struct queue_entry *llm_guided_mutation(struct queue_entry *seed);  
+char *construct_prompt_for_seed_mutation(char *protocol_name, char *seed_content);
 #endif // __CHAT_LLM_H
+

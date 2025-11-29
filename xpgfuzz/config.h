@@ -21,8 +21,8 @@
    Written and maintained by Michal Zalewski <lcamtuf@google.com>
 */
 
-#define AI_MUTATION_PROB 15        // AI变异概率 (0-100)  
-#define MAX_AI_CALLS 30           // 最大AI调用次数
+/* Probability of sending seed to LLM for guidance (0-100) */  
+#define LLM_GUIDANCE_PROB   10
 
 #ifndef _HAVE_CONFIG_H
 #define _HAVE_CONFIG_H
@@ -77,7 +77,7 @@
 /* The threshold to select the mutation based on grammars */
 #define EPSILON_CHOICE      0.5
 #define UNINTERESTING_THRESHOLD  512
-#define CHATTING_THRESHOLD  0
+#define CHATTING_THRESHOLD  64
 
 /* Number of calibration cycles per every new test case (and for test
    cases that show variable behavior): */
