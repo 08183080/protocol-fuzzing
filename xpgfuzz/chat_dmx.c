@@ -13,6 +13,11 @@
 // -lcurl -ljson-c -lpcre2-8
 // apt install libcurl4-openssl-dev libjson-c-dev libpcre2-dev libpcre2-8-0
 
+
+#define GUIJI_TOKEN "sk-euzveulqwqbseottflzsjkswoaifhunhfmwjhqpdcmejvzaw"
+#define DMX_CN_TOKEN "sk-8zHsIMvjPzEQNunLVrvn8W4OnklFLBJ6ZYj1DPnTS1NQXaRK"
+#define DMX_COM_TOKEN "sk-u9cz1IP6akgZlvFI0bILSOqGkDSp5hEo4O7RcTKZDXiXlADs"
+
 #define MAX_TOKENS 2048
 #define CONFIDENT_TIMES 3
 
@@ -49,14 +54,15 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     char *answer = NULL;
     char *url = NULL;
 
-    url = "https://api.siliconflow.cn/v1/chat/completions";
+    // url = "https://api.siliconflow.cn/v1/chat/completions";
+    url = "https://www.dmxapi.com/v1/chat/completions";
 
-    char *auth_header = "Authorization: Bearer " GUIJI_TOKEN;  //携带者令牌
+    char *auth_header = "Authorization: Bearer " DMX_COM_TOKEN;  //携带者令牌
     char *content_header = "Content-Type: application/json";  //输入是json
     char *accept_header = "Accept: application/json";       //接受json响应
     char *data = NULL;  
 
-    asprintf(&data, "{\"model\": \"Qwen/QwQ-32B\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
+    asprintf(&data, "{\"model\": \"gpt-3.5-turbo\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
     
     curl_global_init(CURL_GLOBAL_DEFAULT);
     do
@@ -137,11 +143,11 @@ int main()
     char *result = NULL;
 
     printf("--- Starting LLM Chat Request ---\n");
-    printf("Model:Qwen/QwQ-32B (Chat Mode)\n");
+    // printf("Model:Qwen/QwQ-32B (Chat Mode)\n");
     printf("Prompt: %s\n", chat_prompt);
 
     
-    result = chat_with_llm(chat_prompt, "Qwen/QwQ-32B", 3, 0.7);
+    result = chat_with_llm(chat_prompt, "gpt-3.5-turbo", 3, 0);
 
     printf("\n--- LLM Response ---\n");
     if (result)

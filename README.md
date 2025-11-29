@@ -12,3 +12,4 @@
 - [x] 11/28，凌晨。成功修改在chatafl的代码中调用硅基流动提供的免费的api。
 - [x] 11/29，下午，温习shell编程，以及最小化精简shell代码。存储在/shell_scripts/中。
 - [x] 11/29，极速自动化容器运行proftpd，但是显示信息硅基流动的免费api用起来不稳定。
+- [x] 11/29，付费购买dmx聚合api国际站，跑通。修改xpgfuzz/chat_dmx.c文件。

@@ -12,8 +12,9 @@ We give at most 400 for the examples and 1300 for the stall prompt
 Similarly 1700 is for the example request in the seed enrichment
 */
 
-
 #define GUIJI_TOKEN "sk-euzveulqwqbseottflzsjkswoaifhunhfmwjhqpdcmejvzaw"
+#define DMX_CN_TOKEN "sk-8zHsIMvjPzEQNunLVrvn8W4OnklFLBJ6ZYj1DPnTS1NQXaRK"
+#define DMX_COM_TOKEN "sk-u9cz1IP6akgZlvFI0bILSOqGkDSp5hEo4O7RcTKZDXiXlADs"
 
 #define MAX_PROMPT_LENGTH 2048
 #define EXAMPLES_PROMPT_LENGTH 400
