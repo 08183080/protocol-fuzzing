@@ -1,9 +1,0 @@
-USER anonymous
-PASS ubuntu
-FEAT
-SYST
-PWD
-SIZE /path/to/file
-PORT 127,0,0,1,152,193
-LIST
-QUIT

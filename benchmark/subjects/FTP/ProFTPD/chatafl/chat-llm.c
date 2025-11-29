@@ -48,26 +48,12 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     CURLcode res = CURLE_OK;
     char *answer = NULL;
     char *url = NULL;
-    if (strcmp(model, "instruct") == 0)
-    {
-        url = "https://api.chatanywhere.tech/v1/completions";
-    }
-    else
-    {
-        url = "https://api.chatanywhere.tech/v1/chat/completions";
-    }
-    char *auth_header = "Authorization: Bearer " OPENAI_TOKEN;
+    url = "https://api.siliconflow.cn/v1/chat/completions";
+    char *auth_header = "Authorization: Bearer " GUIJI_TOKEN;
     char *content_header = "Content-Type: application/json";
     char *accept_header = "Accept: application/json";
     char *data = NULL;
-    if (strcmp(model, "instruct") == 0)
-    {
-        asprintf(&data, "{\"model\": \"gpt-3.5-turbo-instruct\", \"prompt\": \"%s\", \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
-    }
-    else
-    {
-        asprintf(&data, "{\"model\": \"gpt-3.5-turbo\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
-    }
+    asprintf(&data, "{\"model\": \"Qwen/QwQ-32B\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
     curl_global_init(CURL_GLOBAL_DEFAULT);
     do
     {
@@ -103,18 +89,10 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
                     json_object *first_choice = json_object_array_get_idx(choices, 0);
                     const char *data;
 
-                    // The answer begins with a newline character, so we remove it
-                    if (strcmp(model, "instruct") == 0)
-                    {
-                        json_object *jobj4 = json_object_object_get(first_choice, "text");
-                        data = json_object_get_string(jobj4);
-                    }
-                    else
-                    {
-                        json_object *jobj4 = json_object_object_get(first_choice, "message");
-                        json_object *jobj5 = json_object_object_get(jobj4, "content");
-                        data = json_object_get_string(jobj5);
-                    }
+                    json_object *jobj4 = json_object_object_get(first_choice, "message");
+                    json_object *jobj5 = json_object_object_get(jobj4, "content");
+                    data = json_object_get_string(jobj5);
+                    
                     if (data[0] == '\n')
                         data++;
                     answer = strdup(data);

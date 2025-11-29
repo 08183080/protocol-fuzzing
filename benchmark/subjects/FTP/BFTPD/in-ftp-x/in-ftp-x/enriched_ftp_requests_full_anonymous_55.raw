@@ -1,9 +1,0 @@
-USER anonymous
-PASS ubuntu
-OPTS UTF8 ON
-SYST
-PWD
-SITE CHMOD 755 /home/user
-PORT 127,0,0,1,152,193
-LIST
-QUIT

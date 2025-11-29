@@ -1,35 +1,4 @@
-/*
-  Copyright 2013 Google LLC All rights reserved.
-
-  Licensed under the Apache License, Version 2.0 (the "License");
-  you may not use this file except in compliance with the License.
-  You may obtain a copy of the License at:
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-  Unless required by applicable law or agreed to in writing, software
-  distributed under the License is distributed on an "AS IS" BASIS,
-  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  See the License for the specific language governing permissions and
-  limitations under the License.
-*/
-
-/*
-   american fuzzy lop - fuzzer code
-   --------------------------------
-
-   Written and maintained by Michal Zalewski <lcamtuf@google.com>
-
-   Forkserver design by Jann Horn <jannhorn@googlemail.com>
-
-   This is the real deal: the program takes an instrumented binary and
-   attempts a variety of basic fuzzing tricks, paying close attention to
-   how they affect the execution path.
-
-*/
-
 #define AFL_MAIN
-#include "android-ashmem.h"
 #define MESSAGES_TO_STDOUT
 
 #ifndef _GNU_SOURCE
@@ -434,7 +403,7 @@ u32 reward_grammar;
 void setup_llm_grammars()
 {
 
-  ACTF("Getting grammars from LLM...");
+  ACTF("[语法提取]从大模型中提取语法模板...\n");
 
   khash_t(consistency_table) *const_table = kh_init(consistency_table);
   char *first_question;
@@ -444,14 +413,14 @@ void setup_llm_grammars()
   {
     klist_t(gram) *grammar_list = kl_init(gram);
 
-    char *templates_answer = chat_with_llm(templates_prompt, "turbo", GRAMMAR_RETRIES, 0.5);
+    char *templates_answer = chat_with_llm(templates_prompt, "Qwen/QwQ-32B", GRAMMAR_RETRIES, 0.5);
     if (templates_answer == NULL)
       goto free_templates_answer;
 
     // printf("## Answer from LLM:\n %s\n", templates_answer);
     char *remaining_prompt = construct_prompt_for_remaining_templates(protocol_name, first_question, templates_answer);
     // printf("remaining prompt is:\n %s\n", remaining_prompt);
-    char *remaining_templates = chat_with_llm(remaining_prompt, "turbo", GRAMMAR_RETRIES, 0.5);
+    char *remaining_templates = chat_with_llm(remaining_prompt, "Qwen/QwQ-32B", GRAMMAR_RETRIES, 0.5);
     if (remaining_templates == NULL)
       goto free_remaining;
 
@@ -6946,7 +6915,7 @@ AFLNET_REGIONS_SELECTION:;
 
         char *stall_prompt = construct_prompt_stall(protocol_name, examples, history);
         // printf("Got prompt:\n\n%s\n",stall_prompt);
-        char *stall_response = chat_with_llm(stall_prompt, "turbo", STALL_RETRIES, 1.5);
+        char *stall_response = chat_with_llm(stall_prompt, "Qwen/QwQ-32B", STALL_RETRIES, 1.5);
         // printf("Got response:\n\n%s\n",stall_response);
 
         {
@@ -10683,10 +10652,10 @@ int main(int argc, char **argv)
     protocol_patterns = kl_init(rang);
     message_types_set = kh_init(strSet);
 
-    setup_llm_grammars();
-    enrich_testcases();
+    setup_llm_grammars();  //提取语法
+    enrich_testcases();  //丰富种子
   }
-  read_testcases();
+  read_testcases();  //读取种子
   load_auto();
 
   pivot_inputs();

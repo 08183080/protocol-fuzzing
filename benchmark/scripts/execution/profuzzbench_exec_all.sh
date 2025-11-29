@@ -55,17 +55,6 @@ do
             then
                 profuzzbench_exec_common.sh lightftp $NUM_CONTAINERS results-lightftp xpgfuzz out-lightftp-xpgfuzz "-P FTP -D 10000 -q 3 -s 3 -E -K -m none -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
             fi
-
-            if [[ $FUZZER == "chatafl-cl1" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh lightftp $NUM_CONTAINERS results-lightftp chatafl-cl1 out-lightftp-chatafl_cl1 "-P FTP -D 10000 -q 3 -s 3 -E -K -m none -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
-            if [[ $FUZZER == "chatafl-cl2" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh lightftp $NUM_CONTAINERS results-lightftp chatafl-cl2 out-lightftp-chatafl_cl2 "-P FTP -D 10000 -q 3 -s 3 -E -K -m none -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
         fi
 
 
@@ -89,17 +78,6 @@ do
             then
                 profuzzbench_exec_common.sh bftpd $NUM_CONTAINERS results-bftpd xpgfuzz out-bftpd-xpgfuzz "-P FTP -D 10000 -q 3 -s 3 -E -K -m none -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
             fi
-            
-            if [[ $FUZZER == "chatafl-cl1" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh bftpd $NUM_CONTAINERS results-bftpd chatafl-cl1 out-bftpd-chatafl_cl1 "-m none -P FTP -D 10000 -q 3 -s 3 -E -K -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
-            if [[ $FUZZER == "chatafl-cl2" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh bftpd $NUM_CONTAINERS results-bftpd chatafl-cl2 out-bftpd-chatafl_cl2 "-m none -P FTP -D 10000 -q 3 -s 3 -E -K -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
         fi
 
 
@@ -123,17 +101,6 @@ do
             then
                 profuzzbench_exec_common.sh proftpd $NUM_CONTAINERS results-proftpd xpgfuzz out-proftpd-xpgfuzz "-P FTP -D 10000 -q 3 -s 3 -E -K -m none -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
             fi
-
-            if [[ $FUZZER == "chatafl-cl1" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh proftpd $NUM_CONTAINERS results-proftpd chatafl-cl1 out-proftpd-chatafl_cl1 "-m none -P FTP -D 10000 -q 3 -s 3 -E -K -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
-            if [[ $FUZZER == "chatafl-cl2" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh proftpd $NUM_CONTAINERS results-proftpd chatafl-cl2 out-proftpd-chatafl_cl2 "-m none -P FTP -D 10000 -q 3 -s 3 -E -K -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
         fi
 
         if [[ $TARGET == "pure-ftpd" ]] || [[ $TARGET == "all" ]]
@@ -156,17 +123,6 @@ do
             then
                 profuzzbench_exec_common.sh pure-ftpd $NUM_CONTAINERS results-pure-ftpd xpgfuzz out-pure-ftpd-xpgfuzz "-P FTP -D 10000 -q 3 -s 3 -E -K -m none -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
             fi
-
-            if [[ $FUZZER == "chatafl-cl1" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh pure-ftpd $NUM_CONTAINERS results-pure-ftpd chatafl-cl1 out-pure-ftpd-chatafl_cl1 "-m none -P FTP -D 10000 -q 3 -s 3 -E -K -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
-            if [[ $FUZZER == "chatafl-cl2" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh pure-ftpd $NUM_CONTAINERS results-pure-ftpd chatafl-cl2 out-pure-ftpd-chatafl_cl2 "-m none -P FTP -D 10000 -q 3 -s 3 -E -K -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
         fi
 
 
@@ -192,17 +148,6 @@ do
             then
                 profuzzbench_exec_common.sh exim $NUM_CONTAINERS results-exim xpgfuzz out-exim-xpgfuzz "-P SMTP -D 10000 -q 3 -s 3 -E -K -W 100 -m none -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
             fi
-
-            if [[ $FUZZER == "chatafl-cl1" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh exim $NUM_CONTAINERS results-exim chatafl-cl1 out-exim-chatafl_cl1 "-P SMTP -D 10000 -q 3 -s 3 -E -K -W 100 -m none -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
-            if [[ $FUZZER == "chatafl-cl2" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh exim $NUM_CONTAINERS results-exim chatafl-cl2 out-exim-chatafl_cl2 "-P SMTP -D 10000 -q 3 -s 3 -E -K -W 100 -m none -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
         fi
 
 
@@ -229,17 +174,6 @@ do
                 profuzzbench_exec_common.sh live555 $NUM_CONTAINERS results-live555 xpgfuzz out-live555-xpgfuzz "-P RTSP -D 60000000 -t 300000+ -q 3 -s 3 -E -K -R -m none" $TIMEOUT $SKIPCOUNT &
 
             fi
-
-            if [[ $FUZZER == "chatafl-cl1" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh live555 $NUM_CONTAINERS results-live555 chatafl-cl1 out-live555-chatafl_cl1 "-P RTSP -D 60000000 -t 300000+ -q 3 -s 3 -E -K -R -m none" $TIMEOUT $SKIPCOUNT &
-            fi
-
-            if [[ $FUZZER == "chatafl-cl2" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh live555 $NUM_CONTAINERS results-live555 chatafl-cl2 out-live555-chatafl_cl2 "-P RTSP -D 60000000 -t 300000+ -q 3 -s 3 -E -K -R -m none" $TIMEOUT $SKIPCOUNT &
-            fi
-
         fi
 
 
@@ -265,17 +199,6 @@ do
             then
                 profuzzbench_exec_common.sh kamailio $NUM_CONTAINERS results-kamailio xpgfuzz out-kamailio-xpgfuzz "-m none -P SIP -l 5061 -D 50000 -q 3 -s 3 -E -K -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
             fi
-
-            if [[ $FUZZER == "chatafl-cl1" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh kamailio $NUM_CONTAINERS results-kamailio chatafl-cl1 out-kamailio-chatafl_cl1 "-m none -P SIP -l 5061 -D 50000 -q 3 -s 3 -E -K -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
-            if [[ $FUZZER == "chatafl-cl2" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh kamailio $NUM_CONTAINERS results-kamailio chatafl-cl2 out-kamailio-chatafl_cl2 "-m none -P SIP -l 5061 -D 50000 -q 3 -s 3 -E -K -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
         fi
 
 ##### DAAPD #####
@@ -300,17 +223,6 @@ do
             then
                 profuzzbench_exec_common.sh forked-daapd $NUM_CONTAINERS results-forked-daapd xpgfuzz out-forked-daapd-xpgfuzz "-P HTTP -D 200000 -m none -q 3 -s 3 -E -K -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
             fi
-
-            if [[ $FUZZER == "chatafl-cl1" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh forked-daapd $NUM_CONTAINERS results-forked-daapd chatafl-cl1 out-forked-daapd-chatafl_cl1 "-P HTTP -D 200000 -m none -q 3 -s 3 -E -K -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
-            if [[ $FUZZER == "chatafl-cl2" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh forked-daapd $NUM_CONTAINERS results-forked-daapd chatafl-cl2 out-forked-daapd-chatafl_cl2 "-P HTTP -D 200000 -m none -q 3 -s 3 -E -K -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
         fi
 
 ##### HTTP #####
@@ -335,17 +247,6 @@ do
             then
                 profuzzbench_exec_common.sh lighttpd1 $NUM_CONTAINERS results-lighttpd1 xpgfuzz out-lighttpd1-xpgfuzz "-P HTTP -D 200000 -m none -q 3 -s 3 -E -K -R -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
             fi
-
-            if [[ $FUZZER == "chatafl-cl1" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh lighttpd1 $NUM_CONTAINERS results-lighttpd1 chatafl-cl1 out-lighttpd1-chatafl_cl1 "-P HTTP -D 200000 -m none -q 3 -s 3 -E -K -R -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
-            if [[ $FUZZER == "chatafl-cl2" ]] || [[ $FUZZER == "all" ]]
-            then
-                profuzzbench_exec_common.sh lighttpd1 $NUM_CONTAINERS results-lighttpd1 chatafl-cl2 out-lighttpd1-chatafl_cl2 "-P HTTP -D 200000 -m none -q 3 -s 3 -E -K -R -t ${TEST_TIMEOUT}+" $TIMEOUT $SKIPCOUNT &
-            fi
-
         fi
 
 
@@ -357,4 +258,3 @@ do
 
     done
 done
-

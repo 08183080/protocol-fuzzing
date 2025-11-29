@@ -1,9 +1,0 @@
-USER anonymous
-PASS ubuntu
-SYST
-PWD
-CDUP
-PORT 127,0,0,1,152,193
-RETR example.txt
-LIST
-QUIT
