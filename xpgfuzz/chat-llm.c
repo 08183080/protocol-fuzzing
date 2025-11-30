@@ -150,9 +150,13 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
 
 char *construct_prompt_stall(char *protocol_name, char *examples, char *history)
 {
-    char *template = "In the %s protocol, the communication history between the %s client and the %s server is as follows."
-                     "The next proper client request that can affect the server's state are:\\n\\n"
-                     "Desired format of real client requests:\\n%sCommunication History:\\n\\\"\\\"\\\"\\n%s\\\"\\\"\\\"";
+    char *template = "CRITICAL: Return ONLY the raw protocol command, NO explanations, NO analysis, NO markdown.\\n\\n"
+                     "Protocol: %s\\n\\n"
+                     "Communication History:\\n"
+                     "\\\"\\\"\\\"\\n%s\\\"\\\"\\\"\\n\\n"
+                     "Desired format example:\\n%s\\n\\n"
+                     "Task: Generate the next proper client request that can affect the server's state.\\n"
+                     "Output: Return ONLY the raw command line (e.g., \"PASS password\\r\\n\" or \"CWD /path\\r\\n\"), nothing else.";
 
     char *prompt = NULL;
     asprintf(&prompt, template, protocol_name, protocol_name, protocol_name, examples, history);
@@ -259,12 +263,171 @@ char *construct_prompt_for_remaining_templates(char *protocol_name, char *first_
     return prompt;
 }
 
-char *extract_stalled_message(char *message, size_t message_len)
-{
-
+// Extract command from LLM response (handles explanations, markdown, etc.)
+static char *extract_command_from_response(const char *response, size_t response_len) {
+    if (!response || response_len == 0) return NULL;
+    
+    // Strategy 1: Look for code blocks (```...```)
+    const char *code_start = strstr(response, "```");
+    if (code_start) {
+        code_start += 3; // Skip ```
+        // Skip language identifier
+        while (code_start < response + response_len && 
+               (*code_start == '\n' || *code_start == ' ' || 
+                (*code_start >= 'a' && *code_start <= 'z') ||
+                (*code_start >= 'A' && *code_start <= 'Z'))) {
+            code_start++;
+        }
+        const char *code_end = strstr(code_start, "```");
+        if (code_end) {
+            size_t len = code_end - code_start;
+            char *result = malloc(len + 1);
+            strncpy(result, code_start, len);
+            result[len] = '\0';
+            // Extract first line (the command)
+            char *newline = strchr(result, '\n');
+            if (newline) *newline = '\0';
+            return result;
+        }
+    }
+    
+    // Strategy 2: Look for "Request-1:", "Final Answer:", etc.
+    const char *markers[] = {
+        "Request-1:",
+        "request-1:",
+        "Final Answer:",
+        "final answer:",
+        "Answer:",
+        "answer:",
+        "Command:",
+        "command:",
+        "Next request:",
+        "next request:"
+    };
+    
+    for (int i = 0; i < sizeof(markers) / sizeof(markers[0]); i++) {
+        const char *marker = strstr(response, markers[i]);
+        if (marker) {
+            marker += strlen(markers[i]);
+            // Skip whitespace
+            while (marker < response + response_len && 
+                   (*marker == ' ' || *marker == '\n' || *marker == '\r' || *marker == '\t')) {
+                marker++;
+            }
+            
+            // Extract until next newline or end
+            const char *end = marker;
+            while (end < response + response_len && *end != '\n' && *end != '\r' && *end != '\0') {
+                end++;
+            }
+            
+            size_t len = end - marker;
+            if (len > 0) {
+                char *result = malloc(len + 1);
+                strncpy(result, marker, len);
+                result[len] = '\0';
+                return result;
+            }
+        }
+    }
+    
+    // Strategy 3: Look for protocol commands (USER, PASS, CWD, etc.) followed by parameters
+    // Pattern: COMMAND followed by optional parameters and \r\n
+    const char *protocol_commands[] = {
+        "PASS ", "USER ", "CWD ", "RETR ", "STOR ", "LIST ", "DELE ", 
+        "MKD ", "RMD ", "RNFR ", "RNTO ", "TYPE ", "PASV ", "PORT ",
+        "QUIT", "SYST", "NOOP", "PWD", "HELP", "STAT", "FEAT"
+    };
+    
+    for (int i = 0; i < sizeof(protocol_commands) / sizeof(protocol_commands[0]); i++) {
+        const char *cmd = strstr(response, protocol_commands[i]);
+        if (cmd) {
+            // Find the end of the command line
+            const char *line_end = cmd;
+            while (line_end < response + response_len && 
+                   *line_end != '\n' && *line_end != '\r' && *line_end != '\0') {
+                line_end++;
+            }
+            
+            size_t len = line_end - cmd;
+            if (len > 0 && len < 200) { // Reasonable command length
+                char *result = malloc(len + 1);
+                strncpy(result, cmd, len);
+                result[len] = '\0';
+                // Trim trailing whitespace
+                char *trim = result + len - 1;
+                while (trim > result && (*trim == ' ' || *trim == '\t')) {
+                    *trim = '\0';
+                    trim--;
+                }
+                return result;
+            }
+        }
+    }
+    
+    // Strategy 4: Original regex-based extraction (fallback)
     int errornumber;
     size_t erroroffset;
-    // After a lot of iterations, the model consistently responds with an empty line and then a line of text
+    pcre2_code *extracter = pcre2_compile("\r?\n?.*?\r?\n", PCRE2_ZERO_TERMINATED, 0, &errornumber, &erroroffset, NULL);
+    if (extracter) {
+        pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(extracter, NULL);
+        int rc = pcre2_match(extracter, response, response_len, 0, 0, match_data, NULL);
+        char *res = NULL;
+        if (rc >= 0) {
+            size_t *ovector = pcre2_get_ovector_pointer(match_data);
+            if (ovector[1] < response_len) {
+                res = strdup(response + ovector[1]);
+            }
+        }
+        pcre2_match_data_free(match_data);
+        pcre2_code_free(extracter);
+        if (res) return res;
+    }
+    
+    return NULL;
+}
+
+char *extract_stalled_message(char *message, size_t message_len)
+{
+    if (!message || message_len == 0) return NULL;
+    
+    // Use improved extraction function
+    char *extracted = extract_command_from_response(message, message_len);
+    
+    if (extracted) {
+        // Clean up: remove any remaining markdown, explanations
+        char *cleaned = extracted;
+        
+        // Remove leading/trailing whitespace
+        while (*cleaned == ' ' || *cleaned == '\n' || *cleaned == '\r' || *cleaned == '\t') {
+            cleaned++;
+        }
+        char *end = cleaned + strlen(cleaned) - 1;
+        while (end > cleaned && (*end == ' ' || *end == '\n' || *end == '\r' || *end == '\t')) {
+            *end = '\0';
+            end--;
+        }
+        
+        // Remove markdown code markers if present
+        if (cleaned[0] == '`' && cleaned[1] == '`' && cleaned[2] == '`') {
+            cleaned += 3;
+            char *newline = strchr(cleaned, '\n');
+            if (newline) cleaned = newline + 1;
+        }
+        
+        // If we modified the pointer, create new string
+        if (cleaned != extracted) {
+            char *result = strdup(cleaned);
+            free(extracted);
+            return result;
+        }
+        
+        return extracted;
+    }
+    
+    // Fallback: original simple extraction
+    int errornumber;
+    size_t erroroffset;
     pcre2_code *extracter = pcre2_compile("\r?\n?.*?\r?\n", PCRE2_ZERO_TERMINATED, 0, &errornumber, &erroroffset, NULL);
     pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(extracter, NULL);
     int rc = pcre2_match(extracter, message, message_len, 0, 0, match_data, NULL);
@@ -272,7 +435,9 @@ char *extract_stalled_message(char *message, size_t message_len)
     if (rc >= 0)
     {
         size_t *ovector = pcre2_get_ovector_pointer(match_data);
-        res = strdup(message + ovector[1]);
+        if (ovector[1] < message_len) {
+            res = strdup(message + ovector[1]);
+        }
     }
 
     pcre2_match_data_free(match_data);
