@@ -403,7 +403,7 @@ u32 reward_grammar;
 void setup_llm_grammars()
 {
 
-  ACTF("Getting grammars from LLM...");
+  ACTF("【XPGFuzz】开始从大模型中获取语法模板...");
 
   khash_t(consistency_table) *const_table = kh_init(consistency_table);
   char *first_question;
@@ -554,7 +554,7 @@ range_list parse_buffer(char *buf, size_t buf_len)
 
     if(header_pattern == NULL || fields_pattern == NULL) continue;
 
-    range_list header_groups = starts_with(buf, buf_len, header_pattern);
+    range_list header_groups = starts_with(buf, buf_len, header_pattern, patterns);
 
     if (kv_size(header_groups) == 0)
     {
@@ -565,7 +565,7 @@ range_list parse_buffer(char *buf, size_t buf_len)
       range header_match = kv_pop(header_groups);
       char *offsetted_line = buf;
       size_t offsetted_len = buf_len;
-      range_list dyn_ranges = get_mutable_ranges(offsetted_line, offsetted_len, header_match.len, fields_pattern);
+      range_list dyn_ranges = get_mutable_ranges(offsetted_line, offsetted_len, header_match.len, fields_pattern, patterns);
 
       for (int i = 0; i < kv_size(dyn_ranges); i++)
       {
@@ -8178,7 +8178,11 @@ havoc_stage:
 
   int rc = kv_size(original_ranges);
   range *ranges = ck_alloc(rc * sizeof(range));
-  memcpy(ranges, original_ranges.a, rc * sizeof(range));
+  // Copy ranges including constraint pointers (shallow copy is fine, constraints are managed separately)
+  for (int i = 0; i < rc; i++)
+  {
+    ranges[i] = kv_A(original_ranges, i);
+  }
 
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
   {
@@ -8194,6 +8198,18 @@ havoc_stage:
       // while(!ranges[range_choice].mutable){
       //   range_choice = UR(rc);
       // }
+      
+      // Check if this range has a constraint - if so, use constraint-aware mutation
+      if (ranges[range_choice].constraint && ranges[range_choice].constraint->type != CONSTRAINT_NONE)
+      {
+        // Use constraint-aware mutation
+        mutate_value_by_constraint(out_buf + ranges[range_choice].start, 
+                                   ranges[range_choice].len, 
+                                   ranges[range_choice].constraint,
+                                   0);
+        continue;
+      }
+      
       switch (UR(15 + 2 + (region_level_mutation ? 8 : 0)))
       {
 
@@ -8775,6 +8791,14 @@ havoc_stage:
       }
 
       havoc_queued = queued_paths;
+    }
+  }
+  // Free constraints in ranges before destroying
+  for (int i = 0; i < rc; i++)
+  {
+    if (ranges[i].constraint)
+    {
+      free_constraint(ranges[i].constraint);
     }
   }
   kv_destroy(original_ranges);
@@ -10677,7 +10701,7 @@ int main(int argc, char **argv)
     message_types_set = kh_init(strSet);
 
     setup_llm_grammars();
-    enrich_testcases();
+    // enrich_testcases();
   }
   read_testcases();
   load_auto();

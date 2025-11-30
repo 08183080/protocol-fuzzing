@@ -5,6 +5,9 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <time.h>
+#include <arpa/inet.h>
 
 #include "chat-llm.h"
 #include "alloc-inl.h"
@@ -208,19 +211,30 @@ char *construct_enhanced_prompt_stall(char *protocol_name, char *examples, char 
 
 char *construct_prompt_for_templates(char *protocol_name, char **final_msg)
 {
-    // Give one example for learning formats
+    // Give one example for learning formats with type constraints
     char *prompt_rtsp_example = "For the RTSP protocol, the DESCRIBE client request template is:\\n"
-                                "DESCRIBE: [\\\"DESCRIBE <<VALUE>>\\\\r\\\\n\\\","
-                                "\\\"CSeq: <<VALUE>>\\\\r\\\\n\\\","
-                                "\\\"User-Agent: <<VALUE>>\\\\r\\\\n\\\","
-                                "\\\"Accept: <<VALUE>>\\\\r\\\\n\\\","
-                                "\\\"\\\\r\\\\n\\\"]";
+                                "DESCRIBE: [\\\"DESCRIBE <<PATH>>\\\\r\\\\n\\\","
+                                "\\\"CSeq: <<INTEGER:1-65535>>\\\\r\\\\n\\\","
+                                "\\\"User-Agent: <<STRING:1-256>>\\\\r\\\\n\\\","
+                                "\\\"Accept: <<ENUM:application/sdp,application/x-rtsp-tunnelled>>\\\\r\\\\n\\\","
+                                "\\\"\\\\r\\\\n\\\"]\\n\\n"
+                                "Note: Use type constraints in the format:\\n"
+                                "- <<INTEGER:min-max>> for integer ranges (e.g., <<INTEGER:0-65535>>)\\n"
+                                "- <<STRING:min_len-max_len>> for string length ranges (e.g., <<STRING:1-256>>)\\n"
+                                "- <<ENUM:val1,val2,val3>> for enumerated values (e.g., <<ENUM:GET,POST,PUT>>)\\n"
+                                "- <<IP>> for IP addresses\\n"
+                                "- <<PATH>> for file paths\\n"
+                                "- <<HEX>> for hexadecimal values\\n"
+                                "- <<VALUE>> for unconstrained values (backward compatibility)";
 
     char *prompt_http_example = "For the HTTP protocol, the GET client request template is:\\n"
-                                "GET: [\\\"GET <<VALUE>>\\\\r\\\\n\\\"]";  //零样本学习
+                                "GET: [\\\"GET <<PATH>>\\\\r\\\\n\\\","
+                                "\\\"Host: <<IP>>\\\\r\\\\n\\\","
+                                "\\\"User-Agent: <<STRING:1-512>>\\\\r\\\\n\\\","
+                                "\\\"\\\\r\\\\n\\\"]";  //零样本学习
 
     char *msg = NULL;
-    asprintf(&msg, "%s\\n%s\\nFor the %s protocol, all of client request templates are :", prompt_rtsp_example, prompt_http_example, protocol_name);
+    asprintf(&msg, "%s\\n%s\\nFor the %s protocol, all of client request templates are (use type constraints where appropriate):", prompt_rtsp_example, prompt_http_example, protocol_name);
     *final_msg = msg;
     /** Format of prompt_grammars
     prompt_grammars = [
@@ -230,7 +244,7 @@ char *construct_prompt_for_templates(char *protocol_name, char **final_msg)
      **/
     char *prompt_grammars = NULL;
 
-    asprintf(&prompt_grammars, "[{\"role\": \"system\", \"content\": \"You are a helpful assistant.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", msg);
+    asprintf(&prompt_grammars, "[{\"role\": \"system\", \"content\": \"You are a helpful assistant specialized in network protocol analysis. Always use type constraints in templates when you can infer the value type from the protocol specification.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", msg);
 
     return prompt_grammars;
 }
@@ -238,7 +252,7 @@ char *construct_prompt_for_templates(char *protocol_name, char **final_msg)
 char *construct_prompt_for_remaining_templates(char *protocol_name, char *first_question, char *first_answer)
 {
     char *second_question = NULL;
-    asprintf(&second_question, "For the %s protocol, other templates of client requests are:", protocol_name);
+    asprintf(&second_question, "For the %s protocol, other templates of client requests are (use type constraints where appropriate, same format as before):", protocol_name);
 
     json_object *answer_str = json_object_new_string(first_answer);
     // printf("The First Question\n%s\n\n", first_question);
@@ -618,7 +632,23 @@ void extract_message_grammars(char *answers, klist_t(gram) * grammar_list)
     }
 }
 
-int parse_pattern(pcre2_code *replacer, pcre2_match_data *match_data, const char *str, size_t len, char *pattern)
+// Helper function to extract constraint from matched group
+static type_constraint_t *extract_constraint_from_match(const char *str, PCRE2_SIZE start, PCRE2_SIZE end)
+{
+    if (start == (PCRE2_SIZE)-1 || end == (PCRE2_SIZE)-1 || start >= end)
+        return NULL;
+    
+    size_t len = end - start;
+    char *constraint_str = (char *)ck_alloc(len + 1);
+    strncpy(constraint_str, str + start, len);
+    constraint_str[len] = '\0';
+    
+    type_constraint_t *constraint = parse_constraint(constraint_str);
+    ck_free(constraint_str);
+    return constraint;
+}
+
+int parse_pattern(pcre2_code *replacer, pcre2_match_data *match_data, const char *str, size_t len, char *pattern, type_constraint_t **out_constraint)
 {
     strcat(pattern, "(?:");
     // offset == 3;
@@ -637,6 +667,7 @@ int parse_pattern(pcre2_code *replacer, pcre2_match_data *match_data, const char
         }
         pcre2_match_data_free(match_data);
         pcre2_code_free(replacer);
+        if (out_constraint) *out_constraint = NULL;
         return 0;
     }
     // printf("RC is %d\n",rc);
@@ -650,6 +681,12 @@ int parse_pattern(pcre2_code *replacer, pcre2_match_data *match_data, const char
         strncat(pattern, str + ovector[2], ovector[3] - ovector[2]);
         // offset += ovector[3] - ovector[2];
 
+        // Extract constraint from the matched value (group 2)
+        if (out_constraint)
+        {
+            *out_constraint = extract_constraint_from_match(str, ovector[4], ovector[5]);
+        }
+
         strcat(pattern, "(.*)");
         // offset += 3;
 
@@ -660,6 +697,7 @@ int parse_pattern(pcre2_code *replacer, pcre2_match_data *match_data, const char
     {
         // matched the second option - there is no special value
         strncat(pattern, str + ovector[8], ovector[9] - ovector[8]);
+        if (out_constraint) *out_constraint = NULL;
         // offset += ovector[9] - ovector[8];
     }
     else
@@ -668,6 +706,53 @@ int parse_pattern(pcre2_code *replacer, pcre2_match_data *match_data, const char
     }
     strcat(pattern, ")");
     return 1;
+}
+
+// Global storage for pattern constraints
+// Maps pattern pointer to array of constraints for each capture group
+static khash_t(pattern_constraints_map) *pattern_constraints_storage = NULL;
+
+// Initialize pattern constraints storage
+static void init_pattern_constraints_storage(void)
+{
+    if (pattern_constraints_storage == NULL)
+    {
+        pattern_constraints_storage = kh_init(pattern_constraints_map);
+    }
+}
+
+// Store constraints for a pattern
+static void store_pattern_constraints(pcre2_code **patterns, type_constraint_t **header_constraints, int header_count, type_constraint_t **field_constraints, int field_count)
+{
+    init_pattern_constraints_storage();
+    
+    // Use pattern pointer as key
+    khint_t k;
+    int ret;
+    k = kh_put(pattern_constraints_map, pattern_constraints_storage, (void *)patterns, &ret);
+    
+    // Allocate structure to store constraints
+    pattern_with_constraints_t *pc = (pattern_with_constraints_t *)ck_alloc(sizeof(pattern_with_constraints_t));
+    pc->patterns = patterns;
+    pc->header_constraints = header_constraints;
+    pc->field_constraints = field_constraints;
+    pc->header_constraint_count = header_count;
+    pc->field_constraint_count = field_count;
+    
+    kh_value(pattern_constraints_storage, k) = pc;
+}
+
+// Get constraints for a pattern
+pattern_with_constraints_t *get_pattern_constraints(pcre2_code **patterns)
+{
+    if (pattern_constraints_storage == NULL)
+        return NULL;
+    
+    khint_t k = kh_get(pattern_constraints_map, pattern_constraints_storage, (void *)patterns);
+    if (k == kh_end(pattern_constraints_storage))
+        return NULL;
+    
+    return kh_value(pattern_constraints_storage, k);
 }
 
 // If successful, puts 2 patterns in the patterns array, the first one is the header, the second is the fields
@@ -681,6 +766,14 @@ char *extract_message_pattern(const char *header_str, khash_t(field_table) * fie
     pcre2_code *replacer = pcre2_compile("(?:(.*)(?:<<(.*)>>)(.*))|(.+)", PCRE2_ZERO_TERMINATED, PCRE2_DOTALL, &errornumber, &erroroffset, NULL);
     pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(replacer, NULL);
     char *message_type = NULL;
+    
+    // Arrays to store constraints
+    type_constraint_t **header_constraints = NULL;
+    int header_constraint_count = 0;
+    type_constraint_t **field_constraints = NULL;
+    int field_constraint_count = 0;
+    int field_constraint_capacity = 0;
+    
     // int offset = 0;
     /**
      * Example output
@@ -708,10 +801,26 @@ char *extract_message_pattern(const char *header_str, khash_t(field_table) * fie
 
         size_t len = strlen(header_str) - 1;
         strcat(header_pattern, "^"); // Ensure that it captures the start of the string
-        if (!parse_pattern(replacer, match_data, header_str, len, header_pattern))
+        
+        type_constraint_t *header_constraint = NULL;
+        if (!parse_pattern(replacer, match_data, header_str, len, header_pattern, &header_constraint))
         {
             patterns[0] = NULL;
+            pcre2_match_data_free(match_data);
+            pcre2_code_free(replacer);
             return NULL;
+        }
+        
+        // Store header constraint if found
+        if (header_constraint && header_constraint->type != CONSTRAINT_NONE)
+        {
+            header_constraints = (type_constraint_t **)ck_alloc(sizeof(type_constraint_t *));
+            header_constraints[0] = header_constraint;
+            header_constraint_count = 1;
+        }
+        else if (header_constraint)
+        {
+            free_constraint(header_constraint);
         }
     }
 
@@ -738,12 +847,44 @@ char *extract_message_pattern(const char *header_str, khash_t(field_table) * fie
         // The string contains quotations so they are ignored
         str++;
         size_t len = strlen(str) - 1;
-        int matched = parse_pattern(replacer, match_data, str, len, fields_pattern);
+        
+        type_constraint_t *field_constraint = NULL;
+        int matched = parse_pattern(replacer, match_data, str, len, fields_pattern, &field_constraint);
         json_object_put(field_v);
         if (!matched)
         {
             patterns[0] = NULL;
+            // Free constraints collected so far
+            if (header_constraints) {
+                for (int i = 0; i < header_constraint_count; i++) {
+                    free_constraint(header_constraints[i]);
+                }
+                ck_free(header_constraints);
+            }
+            if (field_constraints) {
+                for (int i = 0; i < field_constraint_count; i++) {
+                    if (field_constraints[i]) free_constraint(field_constraints[i]);
+                }
+                ck_free(field_constraints);
+            }
+            pcre2_match_data_free(match_data);
+            pcre2_code_free(replacer);
             return NULL;
+        }
+        
+        // Store field constraint if found
+        if (field_constraint && field_constraint->type != CONSTRAINT_NONE)
+        {
+            if (field_constraint_count >= field_constraint_capacity)
+            {
+                field_constraint_capacity = field_constraint_capacity == 0 ? 8 : field_constraint_capacity * 2;
+                field_constraints = (type_constraint_t **)ck_realloc(field_constraints, field_constraint_capacity * sizeof(type_constraint_t *));
+            }
+            field_constraints[field_constraint_count++] = field_constraint;
+        }
+        else if (field_constraint)
+        {
+            free_constraint(field_constraint);
         }
     }
 
@@ -777,14 +918,35 @@ char *extract_message_pattern(const char *header_str, khash_t(field_table) * fie
         pcre2_jit_compile(p, PCRE2_JIT_COMPLETE);
         patterns[1] = p;
     }
+    
+    // Store constraints for this pattern
+    if (header_constraint_count > 0 || field_constraint_count > 0)
+    {
+        store_pattern_constraints(patterns, header_constraints, header_constraint_count, 
+                                  field_constraints, field_constraint_count);
+    }
+    else
+    {
+        // Free constraint arrays if no constraints found
+        if (header_constraints) ck_free(header_constraints);
+        if (field_constraints) ck_free(field_constraints);
+    }
+    
     return message_type;
 }
 
-range_list starts_with(char *line, int length, pcre2_code *pattern)
+range_list starts_with(char *line, int length, pcre2_code *pattern, pcre2_code **patterns_array)
 {
     pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(pattern, NULL);
 
     int rc = pcre2_match(pattern, line, length, 0, 0, match_data, NULL); // find the first range
+
+    // Get constraints for this pattern if available
+    pattern_with_constraints_t *pc = NULL;
+    if (patterns_array)
+    {
+        pc = get_pattern_constraints(patterns_array);
+    }
 
     // printf("starts_with rc is %d\n", rc);
     if (rc < 0)
@@ -809,27 +971,58 @@ range_list starts_with(char *line, int length, pcre2_code *pattern)
     PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(match_data);
     for (int i = 1; i < rc; i++)
     {
-        if (ovector[2 * i] == -1)
+        if (ovector[2 * i] == (PCRE2_SIZE)-1)
             continue;
         // printf("Group %d %d %d\n",i, ovector[2 * i], ovector[2 * i + 1]);
-        range v = {.start = ovector[2 * i], .len = ovector[2 * i + 1] - ovector[2 * i], .mutable = 1};
+        range v = {.start = ovector[2 * i], .len = ovector[2 * i + 1] - ovector[2 * i], .mutable = 1, .constraint = NULL};
+        
+        // Associate constraint if available (header constraints for header pattern)
+        if (pc && pc->header_constraints && i - 1 < pc->header_constraint_count)
+        {
+            // Duplicate constraint for this range
+            type_constraint_t *constraint = pc->header_constraints[i - 1];
+            if (constraint)
+            {
+                type_constraint_t *constraint_copy = (type_constraint_t *)ck_alloc(sizeof(type_constraint_t));
+                memcpy(constraint_copy, constraint, sizeof(type_constraint_t));
+                // For ENUM, we need to copy the values array
+                if (constraint->type == CONSTRAINT_ENUM)
+                {
+                    constraint_copy->constraint.enum_values.values = (char **)ck_alloc(constraint->constraint.enum_values.count * sizeof(char *));
+                    for (int j = 0; j < constraint->constraint.enum_values.count; j++)
+                    {
+                        constraint_copy->constraint.enum_values.values[j] = strdup(constraint->constraint.enum_values.values[j]);
+                    }
+                }
+                v.constraint = constraint_copy;
+            }
+        }
+        
         kv_push(range, dyn_ranges, v);
         // kv_push(range, dyn_ranges, v);
         //  ranges[0][i - 1] = v;
     }
-    range v = {.start = ovector[0], .len = ovector[1] - ovector[0], .mutable = 1};
+    range v = {.start = ovector[0], .len = ovector[1] - ovector[0], .mutable = 1, .constraint = NULL};
     kv_push(range, dyn_ranges, v); // add the global range at the end
 
     pcre2_match_data_free(match_data);
     return dyn_ranges;
 }
 
-range_list get_mutable_ranges(char *line, int length, int offset, pcre2_code *pattern)
+range_list get_mutable_ranges(char *line, int length, int offset, pcre2_code *pattern, pcre2_code **patterns_array)
 {
     pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(pattern, NULL);
 
+    // Get constraints for this pattern if available
+    pattern_with_constraints_t *pc = NULL;
+    if (patterns_array)
+    {
+        pc = get_pattern_constraints(patterns_array);
+    }
+
     range_list dyn_ranges;
     kv_init(dyn_ranges);
+    int constraint_index = 0; // Track which field constraint to use
 
     for (;;) // catch all the other ranges
     {
@@ -852,17 +1045,40 @@ range_list get_mutable_ranges(char *line, int length, int offset, pcre2_code *pa
         PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(match_data);
         if (offset != ovector[0])
         {
-            range v = {.start = offset, .len = ovector[0] - offset, .mutable = 1};
+            range v = {.start = offset, .len = ovector[0] - offset, .mutable = 1, .constraint = NULL};
             kv_push(range, dyn_ranges, v);
         }
 
         // printf("Matched over %d %d\n", ovector[0], ovector[1]);
         for (int i = 1; i < rc; i++)
         {
-            if (ovector[2 * i] == -1)
+            if (ovector[2 * i] == (PCRE2_SIZE)-1)
                 continue;
             // printf("Group %d %d %d\n",i, ovector[2 * i], ovector[2 * i + 1]);
-            range v = {.start = ovector[2 * i], .len = ovector[2 * i + 1] - ovector[2 * i], .mutable = 1};
+            range v = {.start = ovector[2 * i], .len = ovector[2 * i + 1] - ovector[2 * i], .mutable = 1, .constraint = NULL};
+            
+            // Associate constraint if available (field constraints for fields pattern)
+            if (pc && pc->field_constraints && constraint_index < pc->field_constraint_count)
+            {
+                type_constraint_t *constraint = pc->field_constraints[constraint_index];
+                if (constraint)
+                {
+                    type_constraint_t *constraint_copy = (type_constraint_t *)ck_alloc(sizeof(type_constraint_t));
+                    memcpy(constraint_copy, constraint, sizeof(type_constraint_t));
+                    // For ENUM, we need to copy the values array
+                    if (constraint->type == CONSTRAINT_ENUM)
+                    {
+                        constraint_copy->constraint.enum_values.values = (char **)ck_alloc(constraint->constraint.enum_values.count * sizeof(char *));
+                        for (int j = 0; j < constraint->constraint.enum_values.count; j++)
+                        {
+                            constraint_copy->constraint.enum_values.values[j] = strdup(constraint->constraint.enum_values.values[j]);
+                        }
+                    }
+                    v.constraint = constraint_copy;
+                }
+                constraint_index++;
+            }
+            
             kv_push(range, dyn_ranges, v);
             // ranges[0][i - 1] = v;
         }
@@ -878,7 +1094,7 @@ range_list get_mutable_ranges(char *line, int length, int offset, pcre2_code *pa
 
     if (offset < length) // catch anything past the last matched pattern
     {
-        range v = {.start = offset, .len = length - offset, .mutable = 1};
+        range v = {.start = offset, .len = length - offset, .mutable = 1, .constraint = NULL};
         kv_push(range, dyn_ranges, v);
     }
 
@@ -992,7 +1208,7 @@ void get_protocol_message_types(char *state_prompt, khash_t(strSet) * states_set
     khash_t(strMap) *state_to_times = kh_init(strMap); // map from state to times
 
     char *full_prompt = NULL;
-    asprintf(&full_prompt, "%s\\n%s", state_prompt);
+    asprintf(&full_prompt, "%s", state_prompt);
 
     for (int i = 0; i < CONFIDENT_TIMES; i++)
     {
@@ -1310,4 +1526,478 @@ char *enrich_sequence(char *sequence, khash_t(strSet) * missing_message_types)
     }
     
     return clean_response;
+}
+
+// Parse constraint from string like "<<INTEGER:0-65535>>" or "<<ENUM:GET,POST>>"
+type_constraint_t *parse_constraint(const char *str)
+{
+    if (!str || str[0] != '<' || str[1] != '<')
+        return NULL;
+    
+    type_constraint_t *constraint = (type_constraint_t *)ck_alloc(sizeof(type_constraint_t));
+    constraint->type = CONSTRAINT_NONE;
+    
+    // Skip "<<"
+    const char *start = str + 2;
+    const char *end = strstr(start, ">>");
+    if (!end)
+    {
+        constraint->type = CONSTRAINT_NONE;
+        return constraint;
+    }
+    
+    size_t len = end - start;
+    char *constraint_str = (char *)ck_alloc(len + 1);
+    strncpy(constraint_str, start, len);
+    constraint_str[len] = '\0';
+    
+    // Check for VALUE (no constraint)
+    if (strncmp(constraint_str, "VALUE", 5) == 0)
+    {
+        constraint->type = CONSTRAINT_NONE;
+        ck_free(constraint_str);
+        return constraint;
+    }
+    
+    // Check for INTEGER:min-max
+    if (strncmp(constraint_str, "INTEGER:", 8) == 0)
+    {
+        constraint->type = CONSTRAINT_INTEGER;
+        const char *range = constraint_str + 8;
+        char *dash = strchr(range, '-');
+        if (dash)
+        {
+            constraint->constraint.integer_range.min = atoi(range);
+            constraint->constraint.integer_range.max = atoi(dash + 1);
+        }
+        else
+        {
+            // No range specified, use default
+            constraint->constraint.integer_range.min = 0;
+            constraint->constraint.integer_range.max = 65535;
+        }
+        ck_free(constraint_str);
+        return constraint;
+    }
+    
+    // Check for STRING:min-max
+    if (strncmp(constraint_str, "STRING:", 7) == 0)
+    {
+        constraint->type = CONSTRAINT_STRING;
+        const char *range = constraint_str + 7;
+        char *dash = strchr(range, '-');
+        if (dash)
+        {
+            constraint->constraint.string_range.min_len = atoi(range);
+            constraint->constraint.string_range.max_len = atoi(dash + 1);
+        }
+        else
+        {
+            constraint->constraint.string_range.min_len = 1;
+            constraint->constraint.string_range.max_len = 256;
+        }
+        ck_free(constraint_str);
+        return constraint;
+    }
+    
+    // Check for ENUM:val1,val2,val3
+    if (strncmp(constraint_str, "ENUM:", 5) == 0)
+    {
+        constraint->type = CONSTRAINT_ENUM;
+        const char *values = constraint_str + 5;
+        
+        // Count commas to determine number of values
+        int count = 1;
+        const char *p = values;
+        while (*p)
+        {
+            if (*p == ',') count++;
+            p++;
+        }
+        
+        constraint->constraint.enum_values.count = count;
+        constraint->constraint.enum_values.values = (char **)ck_alloc(count * sizeof(char *));
+        
+        // Parse values
+        char *values_copy = strdup(values);
+        char *token = strtok(values_copy, ",");
+        int i = 0;
+        while (token && i < count)
+        {
+            // Trim whitespace
+            while (*token == ' ') token++;
+            char *end_token = token + strlen(token) - 1;
+            while (end_token > token && *end_token == ' ') *end_token-- = '\0';
+            
+            constraint->constraint.enum_values.values[i] = strdup(token);
+            token = strtok(NULL, ",");
+            i++;
+        }
+        free(values_copy);
+        ck_free(constraint_str);
+        return constraint;
+    }
+    
+    // Check for IP
+    if (strcmp(constraint_str, "IP") == 0)
+    {
+        constraint->type = CONSTRAINT_IP;
+        ck_free(constraint_str);
+        return constraint;
+    }
+    
+    // Check for PATH
+    if (strcmp(constraint_str, "PATH") == 0)
+    {
+        constraint->type = CONSTRAINT_PATH;
+        ck_free(constraint_str);
+        return constraint;
+    }
+    
+    // Check for HEX
+    if (strcmp(constraint_str, "HEX") == 0)
+    {
+        constraint->type = CONSTRAINT_HEX;
+        ck_free(constraint_str);
+        return constraint;
+    }
+    
+    // Unknown constraint type, treat as VALUE
+    constraint->type = CONSTRAINT_NONE;
+    ck_free(constraint_str);
+    return constraint;
+}
+
+    // Free constraint memory
+void free_constraint(type_constraint_t *constraint)
+{
+    if (!constraint)
+        return;
+    
+    if (constraint->type == CONSTRAINT_ENUM)
+    {
+        for (int i = 0; i < constraint->constraint.enum_values.count; i++)
+        {
+            if (constraint->constraint.enum_values.values[i])
+                free(constraint->constraint.enum_values.values[i]);
+        }
+        ck_free(constraint->constraint.enum_values.values);
+    }
+    
+    ck_free(constraint);
+}
+
+// Generate a value according to the constraint
+char *generate_value_by_constraint(type_constraint_t *constraint)
+{
+    if (!constraint || constraint->type == CONSTRAINT_NONE)
+    {
+        // Generate a random string
+        int len = 10 + (random() % 20);
+        char *value = (char *)ck_alloc(len + 1);
+        for (int i = 0; i < len; i++)
+        {
+            value[i] = 32 + (random() % 95); // Printable ASCII
+        }
+        value[len] = '\0';
+        return value;
+    }
+    
+    switch (constraint->type)
+    {
+        case CONSTRAINT_INTEGER:
+        {
+            int min = constraint->constraint.integer_range.min;
+            int max = constraint->constraint.integer_range.max;
+            int value = min + (random() % (max - min + 1));
+            char *str = (char *)ck_alloc(32);
+            snprintf(str, 32, "%d", value);
+            return str;
+        }
+        
+        case CONSTRAINT_STRING:
+        {
+            int min_len = constraint->constraint.string_range.min_len;
+            int max_len = constraint->constraint.string_range.max_len;
+            int len = min_len + (random() % (max_len - min_len + 1));
+            char *value = (char *)ck_alloc(len + 1);
+            for (int i = 0; i < len; i++)
+            {
+                value[i] = 32 + (random() % 95); // Printable ASCII
+            }
+            value[len] = '\0';
+            return value;
+        }
+        
+        case CONSTRAINT_ENUM:
+        {
+            int count = constraint->constraint.enum_values.count;
+            if (count > 0)
+            {
+                int idx = random() % count;
+                return strdup(constraint->constraint.enum_values.values[idx]);
+            }
+            return strdup("");
+        }
+        
+        case CONSTRAINT_IP:
+        {
+            char *ip = (char *)ck_alloc(16);
+            snprintf(ip, 16, "%d.%d.%d.%d", 
+                     (int)(random() % 256), (int)(random() % 256), 
+                     (int)(random() % 256), (int)(random() % 256));
+            return ip;
+        }
+        
+        case CONSTRAINT_PATH:
+        {
+            const char *path_prefixes[] = {"/", "/tmp/", "/var/", "/usr/", "/home/"};
+            const char *path_suffixes[] = {"file", "test", "data", "config", "log"};
+            int prefix_idx = random() % (sizeof(path_prefixes) / sizeof(path_prefixes[0]));
+            int suffix_idx = random() % (sizeof(path_suffixes) / sizeof(path_suffixes[0]));
+            int num = random() % 1000;
+            char *path = (char *)ck_alloc(256);
+            snprintf(path, 256, "%s%s%d", path_prefixes[prefix_idx], path_suffixes[suffix_idx], num);
+            return path;
+        }
+        
+        case CONSTRAINT_HEX:
+        {
+            int len = 4 + (random() % 20);
+            char *hex = (char *)ck_alloc(len + 1);
+            const char *hex_chars = "0123456789ABCDEFabcdef";
+            for (int i = 0; i < len; i++)
+            {
+                hex[i] = hex_chars[random() % 22];
+            }
+            hex[len] = '\0';
+            return hex;
+        }
+        
+        default:
+        {
+            char *value = (char *)ck_alloc(16);
+            snprintf(value, 16, "value%d", (int)(random() % 10000));
+            return value;
+        }
+    }
+}
+
+// Mutate a value according to the constraint
+void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint, u32 offset)
+{
+    if (!constraint || constraint->type == CONSTRAINT_NONE || offset >= len)
+        return;
+    
+    u32 available_len = len - offset;
+    if (available_len == 0)
+        return;
+    
+    switch (constraint->type)
+    {
+        case CONSTRAINT_INTEGER:
+        {
+            // Try to parse as integer and mutate
+            char *str = (char *)ck_alloc(available_len + 1);
+            memcpy(str, buf + offset, available_len);
+            str[available_len] = '\0';
+            
+            int value = atoi(str);
+            int min = constraint->constraint.integer_range.min;
+            int max = constraint->constraint.integer_range.max;
+            
+            // Mutate: add/subtract small value, or set to boundary
+            int mutation_type = (int)(random() % 4);
+            switch (mutation_type)
+            {
+                case 0: value += (random() % 10) - 5; break; // Small change
+                case 1: value = min; break; // Min boundary
+                case 2: value = max; break; // Max boundary
+                case 3: value = min + (random() % (max - min + 1)); break; // Random in range
+            }
+            
+            // Clamp to range
+            if (value < min) value = min;
+            if (value > max) value = max;
+            
+            // Write back
+            char new_str[32];
+            int new_len = snprintf(new_str, 32, "%d", value);
+            if (new_len < available_len)
+            {
+                memcpy(buf + offset, new_str, new_len);
+                // Pad with spaces if needed
+                for (int i = new_len; i < available_len && i < len; i++)
+                {
+                    buf[offset + i] = ' ';
+                }
+            }
+            else
+            {
+                memcpy(buf + offset, new_str, available_len);
+            }
+            ck_free(str);
+            break;
+        }
+        
+        case CONSTRAINT_STRING:
+        {
+            int min_len = constraint->constraint.string_range.min_len;
+            // int max_len = constraint->constraint.string_range.max_len; // Not used currently
+            
+            // Mutate: change random character, or change length
+            int mutation_type = (int)(random() % 3);
+            switch (mutation_type)
+            {
+                case 0: // Change random character
+                    if (available_len > 0)
+                    {
+                        int pos = random() % available_len;
+                        buf[offset + pos] = 32 + (random() % 95);
+                    }
+                    break;
+                case 1: // Set to min length
+                    if (min_len < available_len)
+                    {
+                        for (int i = min_len; i < available_len && i < len; i++)
+                        {
+                            buf[offset + i] = ' ';
+                        }
+                    }
+                    break;
+                case 2: // Inject special characters
+                    if (available_len > 0)
+                    {
+                        const char *special = "\x00\x01\xff\n\r\t";
+                        int pos = random() % available_len;
+                        buf[offset + pos] = special[random() % 6];
+                    }
+                    break;
+            }
+            break;
+        }
+        
+        case CONSTRAINT_ENUM:
+        {
+            // Switch to a different enum value
+            int count = constraint->constraint.enum_values.count;
+            if (count > 0)
+            {
+                int idx = random() % count;
+                const char *new_value = constraint->constraint.enum_values.values[idx];
+                int new_len = strlen(new_value);
+                if (new_len < available_len)
+                {
+                    memcpy(buf + offset, new_value, new_len);
+                    // Pad with spaces
+                    for (int i = new_len; i < available_len && i < len; i++)
+                    {
+                        buf[offset + i] = ' ';
+                    }
+                }
+                else
+                {
+                    memcpy(buf + offset, new_value, available_len);
+                }
+            }
+            break;
+        }
+        
+        case CONSTRAINT_IP:
+        {
+            // Mutate IP address
+            int mutation_type = (int)(random() % 3);
+            switch (mutation_type)
+            {
+                case 0: // Random IP
+                {
+                    char ip[16];
+                    snprintf(ip, 16, "%d.%d.%d.%d", 
+                             (int)(random() % 256), (int)(random() % 256), 
+                             (int)(random() % 256), (int)(random() % 256));
+                    int ip_len = strlen(ip);
+                    if (ip_len < available_len)
+                    {
+                        memcpy(buf + offset, ip, ip_len);
+                    }
+                    else
+                    {
+                        memcpy(buf + offset, ip, available_len);
+                    }
+                    break;
+                }
+                case 1: // Invalid IP format
+                {
+                    const char *invalid = "999.999.999.999";
+                    int invalid_len = strlen(invalid);
+                    memcpy(buf + offset, invalid, invalid_len < available_len ? invalid_len : available_len);
+                    break;
+                }
+                case 2: // Boundary IP
+                {
+                    const char *boundary = "0.0.0.0";
+                    memcpy(buf + offset, boundary, strlen(boundary) < available_len ? strlen(boundary) : available_len);
+                    break;
+                }
+            }
+            break;
+        }
+        
+        case CONSTRAINT_PATH:
+        {
+            // Mutate path: add traversal, special chars, etc.
+            int mutation_type = (int)(random() % 3);
+            switch (mutation_type)
+            {
+                case 0: // Path traversal
+                {
+                    const char *traversal = "../../../etc/passwd";
+                    int trav_len = strlen(traversal);
+                    memcpy(buf + offset, traversal, trav_len < available_len ? trav_len : available_len);
+                    break;
+                }
+                case 1: // Special characters
+                {
+                    if (available_len > 0)
+                    {
+                        buf[offset] = '/';
+                        for (int i = 1; i < available_len && i < len; i++)
+                        {
+                            buf[offset + i] = 32 + (random() % 95);
+                        }
+                    }
+                    break;
+                }
+                case 2: // Long path
+                {
+                    const char *long_path = "/very/long/path/that/exceeds/normal/length";
+                    int path_len = strlen(long_path);
+                    memcpy(buf + offset, long_path, path_len < available_len ? path_len : available_len);
+                    break;
+                }
+            }
+            break;
+        }
+        
+        case CONSTRAINT_HEX:
+        {
+            // Mutate hex: change random character
+            const char *hex_chars = "0123456789ABCDEFabcdef";
+            if (available_len > 0)
+            {
+                int pos = random() % available_len;
+                buf[offset + pos] = hex_chars[random() % 22];
+            }
+            break;
+        }
+        
+        default:
+            // Generic mutation: flip random bit
+            if (available_len > 0)
+            {
+                int pos = random() % available_len;
+                buf[offset + pos] ^= (1 << (random() % 8));
+            }
+            break;
+    }
 }

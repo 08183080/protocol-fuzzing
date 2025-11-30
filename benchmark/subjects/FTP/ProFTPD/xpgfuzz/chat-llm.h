@@ -4,7 +4,9 @@
 #include "klist.h"
 #include "kvec.h"
 #include "khash.h"
+#include "types.h"
 #include <json-c/json.h>
+#include <stdint.h>
 
 /*
 There are 2048 tokens available, around 270 are used for the initial data for the stall prompt
@@ -51,11 +53,42 @@ Similarly 1700 is for the example request in the seed enrichment
 KHASH_SET_INIT_STR(strSet);
 KLIST_INIT(gram, json_object *, __grammar_t_free)
 KLIST_INIT(rang, pcre2_code **, __rang_t_free)
+
+// Type constraint definitions (must be defined before pattern_with_constraints_t)
+typedef enum {
+    CONSTRAINT_NONE,    // <<VALUE>>
+    CONSTRAINT_INTEGER, // <<INTEGER:min-max>>
+    CONSTRAINT_STRING,  // <<STRING:min_len-max_len>>
+    CONSTRAINT_ENUM,    // <<ENUM:val1,val2,...>>
+    CONSTRAINT_IP,       // <<IP>>
+    CONSTRAINT_PATH,    // <<PATH>>
+    CONSTRAINT_HEX      // <<HEX>>
+} constraint_type_t;
+
+typedef struct {
+    constraint_type_t type;
+    union {
+        struct { int min; int max; } integer_range;
+        struct { int min_len; int max_len; } string_range;
+        struct { char **values; int count; } enum_values;
+    } constraint;
+} type_constraint_t;
+
+// Structure to store pattern with constraints
+typedef struct {
+    pcre2_code **patterns;  // [0] = header pattern, [1] = fields pattern
+    type_constraint_t **header_constraints;  // Constraints for header pattern groups
+    type_constraint_t **field_constraints;    // Constraints for field pattern groups
+    int header_constraint_count;
+    int field_constraint_count;
+} pattern_with_constraints_t;
+
 typedef struct
 {
     int start;
     int len;
     int mutable;
+    type_constraint_t *constraint; // Type constraint for this range
 } range;
 
 typedef kvec_t(range) range_list;
@@ -65,6 +98,14 @@ typedef kvec_t(khash_t(strSet)*) message_set_list;
 KHASH_MAP_INIT_STR(strMap, int)
 KHASH_MAP_INIT_STR(field_table, int);
 KHASH_INIT(consistency_table, const char *, khash_t(field_table) *, 1, kh_str_hash_func, kh_str_hash_equal);
+
+// Hash functions for pointer type (defined as macros, similar to kh_int_hash_func)
+#define kh_ptr_hash_func(key) (khint_t)((uintptr_t)(key))
+#define kh_ptr_hash_equal(a, b) ((a) == (b))
+
+// Map to store constraints for each pattern group
+// Key: pattern pointer (as void*), Value: pattern_with_constraints_t*
+KHASH_INIT(pattern_constraints_map, void *, pattern_with_constraints_t *, 1, kh_ptr_hash_func, kh_ptr_hash_equal);
 
 char *chat_with_llm(char *prompt, char *model, int tries, float temperature);
 char *construct_prompt_for_templates(char *protocol_name, char **final_msg);
@@ -79,12 +120,13 @@ char *extract_message_pattern(const char *header_str,
                                pcre2_code **patterns,
                                int debug_file,
                                const char *debug_file_name);
+pattern_with_constraints_t *get_pattern_constraints(pcre2_code **patterns);
 char *extract_stalled_message(char *message, size_t message_len);
 char *format_request_message(char *message);
 
 
-range_list starts_with(char *line, int length, pcre2_code *pattern);
-range_list get_mutable_ranges(char *line, int length, int offset, pcre2_code *pattern);
+range_list starts_with(char *line, int length, pcre2_code *pattern, pcre2_code **patterns_array);
+range_list get_mutable_ranges(char *line, int length, int offset, pcre2_code *pattern, pcre2_code **patterns_array);
 void get_protocol_message_types(char *state_prompt, khash_t(strSet) * message_types);
 
 char *enrich_sequence(char* sequence, khash_t(strSet) *missing_message_types);
@@ -96,4 +138,10 @@ message_set_list message_combinations(khash_t(strSet)* sequence, int size);
 // 在现有函数声明后添加  
 struct queue_entry *llm_guided_mutation(struct queue_entry *seed);  
 char *construct_prompt_for_seed_mutation(char *protocol_name, char *seed_content);
+
+// Type constraint functions
+type_constraint_t *parse_constraint(const char *str);
+void free_constraint(type_constraint_t *constraint);
+char *generate_value_by_constraint(type_constraint_t *constraint);
+void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint, u32 offset);
 #endif // __CHAT_LLM_H
