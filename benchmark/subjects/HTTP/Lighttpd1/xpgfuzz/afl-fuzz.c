@@ -1,35 +1,4 @@
-/*
-  Copyright 2013 Google LLC All rights reserved.
-
-  Licensed under the Apache License, Version 2.0 (the "License");
-  you may not use this file except in compliance with the License.
-  You may obtain a copy of the License at:
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-  Unless required by applicable law or agreed to in writing, software
-  distributed under the License is distributed on an "AS IS" BASIS,
-  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  See the License for the specific language governing permissions and
-  limitations under the License.
-*/
-
-/*
-   american fuzzy lop - fuzzer code
-   --------------------------------
-
-   Written and maintained by Michal Zalewski <lcamtuf@google.com>
-
-   Forkserver design by Jann Horn <jannhorn@googlemail.com>
-
-   This is the real deal: the program takes an instrumented binary and
-   attempts a variety of basic fuzzing tricks, paying close attention to
-   how they affect the execution path.
-
-*/
-
 #define AFL_MAIN
-#include "android-ashmem.h"
 #define MESSAGES_TO_STDOUT
 
 #ifndef _GNU_SOURCE
@@ -434,7 +403,7 @@ u32 reward_grammar;
 void setup_llm_grammars()
 {
 
-  ACTF("Getting grammars from LLM...");
+  ACTF("【XPGFuzz】开始从大模型中获取语法模板...");
 
   khash_t(consistency_table) *const_table = kh_init(consistency_table);
   char *first_question;
@@ -444,14 +413,14 @@ void setup_llm_grammars()
   {
     klist_t(gram) *grammar_list = kl_init(gram);
 
-    char *templates_answer = chat_with_llm(templates_prompt, "turbo", GRAMMAR_RETRIES, 0.5);
+    char *templates_answer = chat_with_llm(templates_prompt, "gpt-3.5-turbo", GRAMMAR_RETRIES, 0);
     if (templates_answer == NULL)
       goto free_templates_answer;
 
     // printf("## Answer from LLM:\n %s\n", templates_answer);
     char *remaining_prompt = construct_prompt_for_remaining_templates(protocol_name, first_question, templates_answer);
     // printf("remaining prompt is:\n %s\n", remaining_prompt);
-    char *remaining_templates = chat_with_llm(remaining_prompt, "turbo", GRAMMAR_RETRIES, 0.5);
+    char *remaining_templates = chat_with_llm(remaining_prompt, "gpt-3.5-turbo", GRAMMAR_RETRIES, 0);
     if (remaining_templates == NULL)
       goto free_remaining;
 
@@ -475,7 +444,25 @@ void setup_llm_grammars()
     {
       json_object *jobj = kl_val(iter);
 
+      // Skip invalid or non-array JSON objects
+      if (jobj == NULL || json_object_get_type(jobj) != json_type_array)
+      {
+        continue;
+      }
+
+      // Check if array has at least one element
+      if (json_object_array_length(jobj) == 0)
+      {
+        continue;
+      }
+
       json_object *header = json_object_array_get_idx(jobj, 0);
+      
+      // Skip if header is NULL or not a string
+      if (header == NULL || json_object_get_type(header) != json_type_string)
+      {
+        continue;
+      }
 
       int absent;
 
@@ -490,7 +477,13 @@ void setup_llm_grammars()
 
       for (int i = 1; i < json_object_array_length(jobj); i++)
       {
-        const char *v = json_object_get_string(json_object_array_get_idx(jobj, i));
+        json_object *field_obj = json_object_array_get_idx(jobj, i);
+        // Skip if field is NULL or not a string
+        if (field_obj == NULL || json_object_get_type(field_obj) != json_type_string)
+        {
+          continue;
+        }
+        const char *v = json_object_get_string(field_obj);
         khash_t(field_table) *field_table = kh_value(const_table, k);
         khiter_t field_k = kh_put(field_table, field_table, v, &absent);
         if (absent)
@@ -561,7 +554,7 @@ range_list parse_buffer(char *buf, size_t buf_len)
 
     if(header_pattern == NULL || fields_pattern == NULL) continue;
 
-    range_list header_groups = starts_with(buf, buf_len, header_pattern);
+    range_list header_groups = starts_with(buf, buf_len, header_pattern, patterns);
 
     if (kv_size(header_groups) == 0)
     {
@@ -572,7 +565,7 @@ range_list parse_buffer(char *buf, size_t buf_len)
       range header_match = kv_pop(header_groups);
       char *offsetted_line = buf;
       size_t offsetted_len = buf_len;
-      range_list dyn_ranges = get_mutable_ranges(offsetted_line, offsetted_len, header_match.len, fields_pattern);
+      range_list dyn_ranges = get_mutable_ranges(offsetted_line, offsetted_len, header_match.len, fields_pattern, patterns);
 
       for (int i = 0; i < kv_size(dyn_ranges); i++)
       {
@@ -2697,7 +2690,7 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
 
     ck_free(regions);
 
-    if(kh_size(messages) == 0)
+    if(kh_size(messages) == 0) 
     {
       kh_destroy(strSet,messages);
       // No missing message types, cannot enrich
@@ -6946,7 +6939,7 @@ AFLNET_REGIONS_SELECTION:;
 
         char *stall_prompt = construct_prompt_stall(protocol_name, examples, history);
         // printf("Got prompt:\n\n%s\n",stall_prompt);
-        char *stall_response = chat_with_llm(stall_prompt, "turbo", STALL_RETRIES, 1.5);
+        char *stall_response = chat_with_llm(stall_prompt, "gpt-3.5-turbo", STALL_RETRIES, 1.5);
         // printf("Got response:\n\n%s\n",stall_response);
 
         {
@@ -8185,7 +8178,11 @@ havoc_stage:
 
   int rc = kv_size(original_ranges);
   range *ranges = ck_alloc(rc * sizeof(range));
-  memcpy(ranges, original_ranges.a, rc * sizeof(range));
+  // Copy ranges including constraint pointers (shallow copy is fine, constraints are managed separately)
+  for (int i = 0; i < rc; i++)
+  {
+    ranges[i] = kv_A(original_ranges, i);
+  }
 
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
   {
@@ -8201,6 +8198,18 @@ havoc_stage:
       // while(!ranges[range_choice].mutable){
       //   range_choice = UR(rc);
       // }
+      
+      // Check if this range has a constraint - if so, use constraint-aware mutation
+      if (ranges[range_choice].constraint && ranges[range_choice].constraint->type != CONSTRAINT_NONE)
+      {
+        // Use constraint-aware mutation
+        mutate_value_by_constraint(out_buf + ranges[range_choice].start, 
+                                   ranges[range_choice].len, 
+                                   ranges[range_choice].constraint,
+                                   0);
+        continue;
+      }
+      
       switch (UR(15 + 2 + (region_level_mutation ? 8 : 0)))
       {
 
@@ -8782,6 +8791,14 @@ havoc_stage:
       }
 
       havoc_queued = queued_paths;
+    }
+  }
+  // Free constraints in ranges before destroying
+  for (int i = 0; i < rc; i++)
+  {
+    if (ranges[i].constraint)
+    {
+      free_constraint(ranges[i].constraint);
     }
   }
   kv_destroy(original_ranges);
@@ -10684,7 +10701,7 @@ int main(int argc, char **argv)
     message_types_set = kh_init(strSet);
 
     setup_llm_grammars();
-    //enrich_testcases();
+    // enrich_testcases();
   }
   read_testcases();
   load_auto();

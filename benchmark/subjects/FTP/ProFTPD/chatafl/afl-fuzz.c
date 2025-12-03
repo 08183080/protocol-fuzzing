@@ -10677,7 +10677,7 @@ int main(int argc, char **argv)
     message_types_set = kh_init(strSet);
 
     setup_llm_grammars();  //提取语法
-    enrich_testcases();  //丰富种子
+    // enrich_testcases();  //丰富种子
   }
   read_testcases();  //读取种子
   load_auto();

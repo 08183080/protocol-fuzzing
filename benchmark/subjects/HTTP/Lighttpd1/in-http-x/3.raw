@@ -1,3 +1,0 @@
-HEAD /hello.txt HTTP/1.0
-User-Agent: legacy-client/0.9
-Accept: */*

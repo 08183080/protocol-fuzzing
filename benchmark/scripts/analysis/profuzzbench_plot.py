@@ -59,44 +59,6 @@ def main(csv_file, put, runs, cut_off, step, out_file, fuzzers):
   fig, axes = plt.subplots(2, 2, figsize = (20, 10))
   fig.suptitle("Code coverage analysis")
 
-  # for key, grp in mean_df.groupby(['fuzzer', 'cov_type']):
-  #   if key[1] == 'b_abs':
-  #     axes[0, 0].plot(grp['time'], grp['cov'])
-  #     #axes[0, 0].set_title('Edge coverage over time (#edges)')
-  #     axes[0, 0].set_xlabel('Time (in min)')
-  #     axes[0, 0].set_ylabel('#edges')
-  #   if key[1] == 'b_per':
-  #     axes[1, 0].plot(grp['time'], grp['cov'])
-  #     #axes[1, 0].set_title('Edge coverage over time (%)')
-  #     axes[1, 0].set_ylim([0,100])
-  #     axes[1, 0].set_xlabel('Time (in min)')
-  #     axes[1, 0].set_ylabel('Edge coverage (%)')
-  #   if key[1] == 'l_abs':
-  #     axes[0, 1].plot(grp['time'], grp['cov'])
-  #     #axes[0, 1].set_title('Line coverage over time (#lines)')
-  #     axes[0, 1].set_xlabel('Time (in min)')
-  #     axes[0, 1].set_ylabel('#lines')
-  #   if key[1] == 'l_per':
-  #     axes[1, 1].plot(grp['time'], grp['cov'])
-  #     #axes[1, 1].set_title('Line coverage over time (%)')
-  #     axes[1, 1].set_ylim([0,100])
-  #     axes[1, 1].set_xlabel('Time (in min)')
-  #     axes[1, 1].set_ylabel('Line coverage (%)')
-
-  # # # 生成替换后的图例标签（将 chatafl_cl2 替换为 chatafl*）
-  # # legend_labels = [fuzzer.replace("chatafl_cl2", "xpgfuzz") for fuzzer in fuzzers]
-  # # legend_labels = [fuzzer.replace("chatafl", "xpgfuzz") for fuzzer in fuzzers]
-
-  # # for i, ax in enumerate(fig.axes):
-  # #     ax.legend(legend_labels, loc='upper left')  # 使用新标签
-  # #     ax.grid()
-
-  # for i, ax in enumerate(fig.axes):
-  #   ax.legend(fuzzers, loc='lower right', fontsize=16)
-  #   # ax.legend(fuzzers, bbox_to_anchor=(1.05, 1), loc='upper left')  
-  #   ax.grid()
-
-
   fontsize_xy = 16      # 横纵坐标字体大小
   legend_fontsize = 16  # 图例字体大小
   tick_fontsize = 14    # 刻度字体大小

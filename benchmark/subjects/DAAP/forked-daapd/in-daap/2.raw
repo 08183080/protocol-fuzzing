@@ -1,5 +1,0 @@
-GET /api/search?type=song&expression=title%3A%22This%20is%20a%20very%20long%20song%20title%20%2B%20%21%40%23%24%25%5E%26*()%20with%20unicode%20%E6%AD%A3%E6%96%87%20and%20emoji%20%F0%9F%8E%B5%F0%9F%8E%B6%F0%9F%8E%B7%22 HTTP/1.1
-Host: localhost
-User-Agent: fuzz-test
-Connection: keep-alive
-
