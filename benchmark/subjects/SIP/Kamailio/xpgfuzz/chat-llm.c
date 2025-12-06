@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <arpa/inet.h>
+#include <math.h>
 
 #include "chat-llm.h"
 #include "alloc-inl.h"
@@ -233,8 +234,16 @@ char *construct_prompt_for_templates(char *protocol_name, char **final_msg)
                                 "\\\"User-Agent: <<STRING:1-512>>\\\\r\\\\n\\\","
                                 "\\\"\\\\r\\\\n\\\"]";  //零样本学习
 
+    char *consistency_guidelines = "\\n\\nCRITICAL CONSISTENCY REQUIREMENTS:\\n"
+                                   "1. Use the SAME format for the same command across ALL requests\\n"
+                                   "2. If a parameter is optional, ALWAYS include it in the template with the constraint marker\\n"
+                                   "3. Maintain consistent spacing: use exactly ONE space between command and parameters\\n"
+                                   "4. Use consistent constraint types for the same field (e.g., always use <<INTEGER:0-255>> not <<STRING:7-15>> for ports)\\n"
+                                   "5. For commands with multiple variants, choose ONE canonical format and use it consistently\\n"
+                                   "6. Enum values should include ALL valid options consistently across all templates";
+
     char *msg = NULL;
-    asprintf(&msg, "%s\\n%s\\nFor the %s protocol, all of client request templates are (use type constraints where appropriate):", prompt_rtsp_example, prompt_http_example, protocol_name);
+    asprintf(&msg, "%s\\n%s%s\\nFor the %s protocol, all of client request templates are (use type constraints where appropriate):", prompt_rtsp_example, prompt_http_example, consistency_guidelines, protocol_name);
     *final_msg = msg;
     /** Format of prompt_grammars
     prompt_grammars = [
@@ -244,7 +253,7 @@ char *construct_prompt_for_templates(char *protocol_name, char **final_msg)
      **/
     char *prompt_grammars = NULL;
 
-    asprintf(&prompt_grammars, "[{\"role\": \"system\", \"content\": \"You are a helpful assistant specialized in network protocol analysis. Always use type constraints in templates when you can infer the value type from the protocol specification.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", msg);
+    asprintf(&prompt_grammars, "[{\"role\": \"system\", \"content\": \"You are a helpful assistant specialized in network protocol analysis. Always use type constraints in templates when you can infer the value type from the protocol specification. CRITICAL: Maintain strict format consistency across all templates - use identical formats for the same commands and fields.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", msg);
 
     return prompt_grammars;
 }
@@ -632,7 +641,55 @@ void extract_message_grammars(char *answers, klist_t(gram) * grammar_list)
     }
 }
 
+// Helper function to normalize constraint string by removing spaces
+// Converts "INTEGER : 0 - 65535" -> "INTEGER:0-65535"
+static char *normalize_constraint_content(const char *str)
+{
+    if (!str) return NULL;
+    
+    size_t len = strlen(str);
+    char *normalized = (char *)ck_alloc(len + 1);
+    if (!normalized) return NULL;
+    
+    int i = 0, j = 0;
+    int last_was_space = 0;
+    
+    while (i < len)
+    {
+        char c = str[i];
+        
+        // Skip spaces, but preserve structure
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r')
+        {
+            last_was_space = 1;
+            i++;
+            continue;
+        }
+        
+        // If previous char was space and current is ':' or '-', skip the space
+        // This handles "INTEGER :" -> "INTEGER:" and "0 - 65535" -> "0-65535"
+        if (last_was_space && (c == ':' || c == '-'))
+        {
+            // Don't add the space, just add the current char
+            normalized[j++] = c;
+            last_was_space = 0;
+            i++;
+            continue;
+        }
+        
+        // If current char is ':' or '-' and previous was space, we already handled it
+        // Otherwise, add the char
+        normalized[j++] = c;
+        last_was_space = 0;
+        i++;
+    }
+    
+    normalized[j] = '\0';
+    return normalized;
+}
+
 // Helper function to extract constraint from matched group
+// Robustly handles spaces in constraint markers
 static type_constraint_t *extract_constraint_from_match(const char *str, PCRE2_SIZE start, PCRE2_SIZE end)
 {
     if (start == (PCRE2_SIZE)-1 || end == (PCRE2_SIZE)-1 || start >= end)
@@ -643,13 +700,50 @@ static type_constraint_t *extract_constraint_from_match(const char *str, PCRE2_S
     strncpy(constraint_str, str + start, len);
     constraint_str[len] = '\0';
     
-    type_constraint_t *constraint = parse_constraint(constraint_str);
+    // Trim leading and trailing whitespace from constraint string
+    // This handles cases like " INTEGER:0-65535 " -> "INTEGER:0-65535"
+    char *trimmed = constraint_str;
+    while (*trimmed == ' ' || *trimmed == '\t' || *trimmed == '\n' || *trimmed == '\r')
+        trimmed++;
+    
+    char *end_ptr = trimmed + strlen(trimmed) - 1;
+    while (end_ptr > trimmed && (*end_ptr == ' ' || *end_ptr == '\t' || *end_ptr == '\n' || *end_ptr == '\r'))
+        end_ptr--;
+    end_ptr[1] = '\0';
+    
+    // Normalize constraint content: remove spaces around ':' and '-'
+    // This handles "INTEGER : 0 - 65535" -> "INTEGER:0-65535"
+    char *normalized_content = normalize_constraint_content(trimmed);
+    const char *content_to_parse = normalized_content ? normalized_content : trimmed;
+    
+    // Parse the normalized constraint
+    // Note: parse_constraint expects the constraint content without <<...>>
+    // e.g., "INTEGER:0-65535" not "<<INTEGER:0-65535>>"
+    type_constraint_t *constraint = NULL;
+    if (strlen(content_to_parse) > 0)
+    {
+        // Add <<...>> wrapper if not present (for backward compatibility)
+        char *wrapped = NULL;
+        if (content_to_parse[0] != '<' || content_to_parse[1] != '<')
+        {
+            asprintf(&wrapped, "<<%s>>", content_to_parse);
+            constraint = parse_constraint(wrapped);
+            free(wrapped);
+        }
+        else
+        {
+            constraint = parse_constraint(content_to_parse);
+        }
+    }
+    
+    if (normalized_content) ck_free(normalized_content);
     ck_free(constraint_str);
     return constraint;
 }
 
 int parse_pattern(pcre2_code *replacer, pcre2_match_data *match_data, const char *str, size_t len, char *pattern, type_constraint_t **out_constraint)
 {
+    size_t pattern_start_len = strlen(pattern);
     strcat(pattern, "(?:");
     // offset == 3;
     int rc = pcre2_match(replacer, str, len, 0, 0, match_data, NULL);
@@ -665,8 +759,10 @@ int parse_pattern(pcre2_code *replacer, pcre2_match_data *match_data, const char
             // printf("Matching error %d\n", rc);
             break;
         }
-        pcre2_match_data_free(match_data);
-        pcre2_code_free(replacer);
+        // Restore pattern to original state for fault tolerance
+        pattern[pattern_start_len] = '\0';
+        // Don't free match_data and replacer here - they are managed by caller
+        // This allows fault-tolerant processing to continue with other fields
         if (out_constraint) *out_constraint = NULL;
         return 0;
     }
@@ -755,6 +851,11 @@ pattern_with_constraints_t *get_pattern_constraints(pcre2_code **patterns)
     return kh_value(pattern_constraints_storage, k);
 }
 
+// Forward declarations
+static char *normalize_constraint_markers(const char *str);
+static char *normalize_constraint_content(const char *str);
+static char *normalize_field_string(const char *field_str);
+
 // If successful, puts 2 patterns in the patterns array, the first one is the header, the second is the fields
 // Else returns an array with the first element being NULL
 char *extract_message_pattern(const char *header_str, khash_t(field_table) * field_table, pcre2_code **patterns, int debug_file, const char *debug_file_name)
@@ -763,7 +864,23 @@ char *extract_message_pattern(const char *header_str, khash_t(field_table) * fie
     size_t erroroffset;
     char header_pattern[128] = {0};
     char fields_pattern[1024] = {0};
-    pcre2_code *replacer = pcre2_compile("(?:(.*)(?:<<(.*)>>)(.*))|(.+)", PCRE2_ZERO_TERMINATED, PCRE2_DOTALL, &errornumber, &erroroffset, NULL);
+    // Enhanced regex to tolerate spaces in <<...>> markers:
+    // - Allows spaces around << and >>: << INTEGER >>, <<INTEGER >>, << INTEGER>>
+    // - Allows spaces inside the marker content: << INTEGER : 0 - 65535 >>
+    // Pattern breakdown:
+    //   (.*) - text before marker (group 1)
+    //   <<\s* - opening << with optional spaces
+    //   (.*?) - content (non-greedy match, group 2)
+    //   \s*>> - closing >> with optional spaces
+    //   (.*) - text after marker (group 3)
+    //   |(.+) - fallback: entire string if no marker found (group 4)
+    // Note: We use non-greedy match (.*?) to stop at the first >>
+    pcre2_code *replacer = pcre2_compile("(?:(.*)(?:<<\\s*(.*?)\\s*>>)(.*))|(.+)", PCRE2_ZERO_TERMINATED, PCRE2_DOTALL, &errornumber, &erroroffset, NULL);
+    if (!replacer)
+    {
+        // Fallback to original pattern if compilation fails
+        replacer = pcre2_compile("(?:(.*)(?:<<(.*)>>)(.*))|(.+)", PCRE2_ZERO_TERMINATED, PCRE2_DOTALL, &errornumber, &erroroffset, NULL);
+    }
     pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(replacer, NULL);
     char *message_type = NULL;
     
@@ -802,14 +919,22 @@ char *extract_message_pattern(const char *header_str, khash_t(field_table) * fie
         size_t len = strlen(header_str) - 1;
         strcat(header_pattern, "^"); // Ensure that it captures the start of the string
         
+        // Normalize constraint markers in header string for robust parsing
+        char *normalized_header = normalize_constraint_markers(header_str);
+        const char *header_to_parse = normalized_header ? normalized_header : header_str;
+        size_t header_parse_len = normalized_header ? strlen(normalized_header) : len;
+        
         type_constraint_t *header_constraint = NULL;
-        if (!parse_pattern(replacer, match_data, header_str, len, header_pattern, &header_constraint))
+        if (!parse_pattern(replacer, match_data, header_to_parse, header_parse_len, header_pattern, &header_constraint))
         {
+            if (normalized_header) ck_free(normalized_header);
             patterns[0] = NULL;
             pcre2_match_data_free(match_data);
             pcre2_code_free(replacer);
             return NULL;
         }
+        
+        if (normalized_header) ck_free(normalized_header);
         
         // Store header constraint if found
         if (header_constraint && header_constraint->type != CONSTRAINT_NONE)
@@ -829,9 +954,15 @@ char *extract_message_pattern(const char *header_str, khash_t(field_table) * fie
     strcat(fields_pattern, "(?|");
     for (khiter_t field_t_iter = kh_begin(field_table); field_t_iter != kh_end(field_table); ++field_t_iter)
     {
-        if (!kh_exist(field_table, field_t_iter) || kh_value(field_table, field_t_iter) < (TEMPLATE_CONSISTENCY_COUNT / 2 + (TEMPLATE_CONSISTENCY_COUNT % 2)))
+        // Lower threshold: require only 2 occurrences (40% instead of 60%)
+        // This allows more fields to pass the consistency check
+        if (!kh_exist(field_table, field_t_iter) || kh_value(field_table, field_t_iter) < 2)
             continue;
 
+        // Save current pattern state for fault tolerance
+        size_t pattern_save_len = strlen(fields_pattern);
+        
+        // Add separator before attempting to parse
         if (!first)
         {
             strcat(fields_pattern, "|");
@@ -848,28 +979,29 @@ char *extract_message_pattern(const char *header_str, khash_t(field_table) * fie
         str++;
         size_t len = strlen(str) - 1;
         
+        // Try to normalize the field string first to merge similar formats
+        char *normalized_str = normalize_field_string(str);
+        const char *str_to_parse = normalized_str ? normalized_str : str;
+        size_t parse_len = normalized_str ? strlen(normalized_str) : len;
+        
         type_constraint_t *field_constraint = NULL;
-        int matched = parse_pattern(replacer, match_data, str, len, fields_pattern, &field_constraint);
+        int matched = parse_pattern(replacer, match_data, str_to_parse, parse_len, fields_pattern, &field_constraint);
+        
+        if (normalized_str) ck_free(normalized_str);
         json_object_put(field_v);
+        
+        // Fault-tolerant: restore pattern state if parsing fails, but continue with others
         if (!matched)
         {
-            patterns[0] = NULL;
-            // Free constraints collected so far
-            if (header_constraints) {
-                for (int i = 0; i < header_constraint_count; i++) {
-                    free_constraint(header_constraints[i]);
-                }
-                ck_free(header_constraints);
+            // Restore pattern to saved state
+            fields_pattern[pattern_save_len] = '\0';
+            // Restore first flag if this was the first field attempt
+            if (pattern_save_len == 3) // Only "(?|" was there
+            {
+                first = 1;
             }
-            if (field_constraints) {
-                for (int i = 0; i < field_constraint_count; i++) {
-                    if (field_constraints[i]) free_constraint(field_constraints[i]);
-                }
-                ck_free(field_constraints);
-            }
-            pcre2_match_data_free(match_data);
-            pcre2_code_free(replacer);
-            return NULL;
+            if (field_constraint) free_constraint(field_constraint);
+            continue;
         }
         
         // Store field constraint if found
@@ -1151,6 +1283,160 @@ char *unescape_string(const char *input)
     return output;
 }
 
+// Normalize <<...>> constraint markers: remove spaces inside and around markers
+// Handles cases like "<< INTEGER >>", "<<INTEGER >>", "<< INTEGER>>" -> "<<INTEGER>>"
+static char *normalize_constraint_markers(const char *str)
+{
+    if (!str) return NULL;
+    
+    size_t len = strlen(str);
+    char *normalized = (char *)ck_alloc(len * 2 + 1); // Allocate extra space for worst case
+    if (!normalized) return NULL;
+    
+    int i = 0, j = 0;
+    int in_marker = 0; // Track if we're inside <<...>>
+    int marker_start = -1; // Position where << started
+    
+    while (i < len)
+    {
+        // Detect start of constraint marker <<
+        if (i < len - 1 && str[i] == '<' && str[i + 1] == '<')
+        {
+            normalized[j++] = '<';
+            normalized[j++] = '<';
+            i += 2;
+            in_marker = 1;
+            marker_start = j;
+            
+            // Skip whitespace immediately after <<
+            while (i < len && (str[i] == ' ' || str[i] == '\t'))
+                i++;
+            continue;
+        }
+        
+        // Detect end of constraint marker >>
+        if (in_marker && i < len - 1 && str[i] == '>' && str[i + 1] == '>')
+        {
+            // Remove trailing spaces before >>
+            while (j > marker_start && (normalized[j-1] == ' ' || normalized[j-1] == '\t'))
+                j--;
+            
+            normalized[j++] = '>';
+            normalized[j++] = '>';
+            i += 2;
+            in_marker = 0;
+            marker_start = -1;
+            continue;
+        }
+        
+        // Inside marker: collapse spaces to single space, but preserve structure
+        if (in_marker)
+        {
+            if (str[i] == ' ' || str[i] == '\t')
+            {
+                // Only add space if previous char wasn't space and wasn't <<
+                if (j > marker_start + 1 && normalized[j-1] != ' ' && normalized[j-1] != '\t')
+                {
+                    normalized[j++] = ' ';
+                }
+                i++;
+            }
+            else
+            {
+                normalized[j++] = str[i++];
+            }
+        }
+        else
+        {
+            // Outside marker: copy as-is
+            normalized[j++] = str[i++];
+        }
+    }
+    
+    normalized[j] = '\0';
+    return normalized;
+}
+
+// Normalize field string format: remove extra spaces, standardize format
+// This helps merge similar field formats that differ only in whitespace
+// Now also handles <<...>> constraint markers robustly
+static char *normalize_field_string(const char *field_str)
+{
+    if (!field_str) return NULL;
+    
+    // First normalize constraint markers <<...>>
+    char *marker_normalized = normalize_constraint_markers(field_str);
+    if (!marker_normalized) return NULL;
+    
+    size_t len = strlen(marker_normalized);
+    char *normalized = (char *)ck_alloc(len + 1);
+    if (!normalized)
+    {
+        ck_free(marker_normalized);
+        return NULL;
+    }
+    
+    int i = 0, j = 0;
+    int last_was_space = 0;
+    
+    // Remove leading whitespace
+    while (i < len && (marker_normalized[i] == ' ' || marker_normalized[i] == '\t'))
+        i++;
+    
+    // Normalize: collapse multiple spaces to single space
+    // But preserve spaces inside <<...>> markers
+    int in_marker = 0;
+    while (i < len)
+    {
+        // Track if we're inside a constraint marker
+        if (i < len - 1 && marker_normalized[i] == '<' && marker_normalized[i + 1] == '<')
+        {
+            in_marker = 1;
+        }
+        else if (i < len - 1 && marker_normalized[i] == '>' && marker_normalized[i + 1] == '>')
+        {
+            in_marker = 0;
+        }
+        
+        if (marker_normalized[i] == ' ' || marker_normalized[i] == '\t')
+        {
+            // Inside markers, preserve single spaces; outside, collapse
+            if (in_marker)
+            {
+                // Only add space if previous char wasn't space
+                if (j > 0 && normalized[j-1] != ' ' && normalized[j-1] != '\t')
+                {
+                    normalized[j++] = ' ';
+                    last_was_space = 1;
+                }
+            }
+            else
+            {
+                // Outside markers: collapse spaces
+                if (!last_was_space && j > 0 && normalized[j-1] != '\r' && normalized[j-1] != '\n')
+                {
+                    normalized[j++] = ' ';
+                    last_was_space = 1;
+                }
+            }
+        }
+        else
+        {
+            normalized[j++] = marker_normalized[i];
+            last_was_space = 0;
+        }
+        i++;
+    }
+    
+    // Remove trailing whitespace
+    while (j > 0 && (normalized[j-1] == ' ' || normalized[j-1] == '\t'))
+        j--;
+    
+    normalized[j] = '\0';
+    ck_free(marker_normalized);
+    return normalized;
+}
+
 void write_new_seeds(char *enriched_file, char *contents)
 {
     FILE *fp = fopen(enriched_file, "w");
@@ -1273,18 +1559,18 @@ khash_t(strSet) * duplicate_hash(khash_t(strSet) * set)
     return new_set;
 }
 
-void make_combination(khash_t(strSet)* sequence, char** data , message_set_list* res,khiter_t st, khiter_t end, int index, int size);
+void make_combination(khash_t(strSet)* sequence, const char** data , message_set_list* res,khiter_t st, khiter_t end, int index, int size);
 
 message_set_list message_combinations(khash_t(strSet)* sequence, int size)
 {
     message_set_list res;
     kv_init(res);
-    char* data[size];
-    make_combination(sequence,data, &res, kh_begin(sequence), kh_end(sequence), 0, size);
+    const char* data[size];
+    make_combination(sequence, data, &res, kh_begin(sequence), kh_end(sequence), 0, size);
     return res;
 }
 
-void make_combination(khash_t(strSet)* sequence, char** data , message_set_list* res,khiter_t st, khiter_t end,
+void make_combination(khash_t(strSet)* sequence, const char** data, message_set_list* res, khiter_t st, khiter_t end,
                      int index, int size)
 {
 
@@ -1293,9 +1579,9 @@ void make_combination(khash_t(strSet)* sequence, char** data , message_set_list*
         khash_t(strSet)* combination = kh_init(strSet);
         int absent;
         for (int j=0; j<size; j++){
-            kh_put(strSet,combination, data[j],&absent );
+            kh_put(strSet, combination, data[j], &absent);
         }
-        kv_push(khash_t(strSet)*,*res,combination);
+        kv_push(khash_t(strSet)*, *res, combination);
         return;
     }
     for (khiter_t i=st; i != end && end-i+1 >= size-index; i++)
@@ -1303,7 +1589,7 @@ void make_combination(khash_t(strSet)* sequence, char** data , message_set_list*
         if(!kh_exist(sequence,i))
             continue;
         data[index] = kh_key(sequence,i);
-        make_combination(sequence, data,res, i+1, end, index+1, size);
+        make_combination(sequence, data, res, i+1, end, index+1, size);
     }
 }
 
@@ -1690,10 +1976,27 @@ void free_constraint(type_constraint_t *constraint)
 // Generate a value according to the constraint
 char *generate_value_by_constraint(type_constraint_t *constraint)
 {
+    // Control mutation magnitude: ensure a certain percentage of "minimal mutations"
+    // (only mutate content, not length) to maintain network interaction stability
+    // This prevents socket buffer overflow or timeout issues that could mask logic bugs
+    // Use 30% probability for minimal mutation (configurable via random() % 100 < 30)
+    const int MINIMAL_MUTATION_PROBABILITY = 30; // 30% chance for minimal mutation
+    int is_minimal_mutation = (random() % 100) < MINIMAL_MUTATION_PROBABILITY;
+    
     if (!constraint || constraint->type == CONSTRAINT_NONE)
     {
         // Generate a random string
-        int len = 10 + (random() % 20);
+        int len;
+        if (is_minimal_mutation)
+        {
+            // Minimal mutation: use fixed small length to avoid socket buffer issues
+            len = 10; // Fixed small length, only mutate content
+        }
+        else
+        {
+            // Normal mutation: allow length variation
+            len = 10 + (random() % 20);
+        }
         char *value = (char *)ck_alloc(len + 1);
         for (int i = 0; i < len; i++)
         {
@@ -1719,7 +2022,17 @@ char *generate_value_by_constraint(type_constraint_t *constraint)
         {
             int min_len = constraint->constraint.string_range.min_len;
             int max_len = constraint->constraint.string_range.max_len;
-            int len = min_len + (random() % (max_len - min_len + 1));
+            int len;
+            if (is_minimal_mutation)
+            {
+                // Minimal mutation: use minimum length, only mutate content
+                len = min_len;
+            }
+            else
+            {
+                // Normal mutation: allow length variation within range
+                len = min_len + (random() % (max_len - min_len + 1));
+            }
             char *value = (char *)ck_alloc(len + 1);
             for (int i = 0; i < len; i++)
             {
@@ -1763,7 +2076,17 @@ char *generate_value_by_constraint(type_constraint_t *constraint)
         
         case CONSTRAINT_HEX:
         {
-            int len = 4 + (random() % 20);
+            int len;
+            if (is_minimal_mutation)
+            {
+                // Minimal mutation: use fixed small length
+                len = 4; // Fixed small length, only mutate content
+            }
+            else
+            {
+                // Normal mutation: allow length variation
+                len = 4 + (random() % 20);
+            }
             char *hex = (char *)ck_alloc(len + 1);
             const char *hex_chars = "0123456789ABCDEFabcdef";
             for (int i = 0; i < len; i++)
@@ -1781,6 +2104,239 @@ char *generate_value_by_constraint(type_constraint_t *constraint)
             return value;
         }
     }
+}
+
+// ============================================================================
+// Multi-Armed Bandit (MAB) Implementation for Mutation Operator Selection
+// ============================================================================
+
+// Global MAB instances for different constraint types
+// These are initialized on first use
+static multi_armed_bandit_t *mab_integer = NULL;  // 25+ operators for INTEGER
+static multi_armed_bandit_t *mab_string = NULL;   // 20+ operators for STRING
+static multi_armed_bandit_t *mab_enum = NULL;     // 8 operators for ENUM
+static multi_armed_bandit_t *mab_ip = NULL;       // 15 operators for IP
+static multi_armed_bandit_t *mab_path = NULL;      // 15 operators for PATH
+static multi_armed_bandit_t *mab_hex = NULL;      // 12 operators for HEX
+
+// Track last selected operator for feedback update
+static constraint_type_t last_constraint_type = CONSTRAINT_NONE;
+static u32 last_selected_operator = 0;
+static u8 mab_enabled = 0;  // Global flag to enable/disable MAB
+
+// Enable or disable MAB for mutation operator selection
+void set_mab_enabled(u8 enabled)
+{
+    mab_enabled = enabled;
+}
+
+// Initialize a Multi-Armed Bandit with specified number of arms
+multi_armed_bandit_t *mab_init(u32 num_arms)
+{
+    multi_armed_bandit_t *mab = (multi_armed_bandit_t *)ck_alloc(sizeof(multi_armed_bandit_t));
+    if (!mab)
+        return NULL;
+    
+    mab->arms = (mab_arm_t *)ck_alloc(num_arms * sizeof(mab_arm_t));
+    if (!mab->arms)
+    {
+        ck_free(mab);
+        return NULL;
+    }
+    
+    // Initialize all arms
+    for (u32 i = 0; i < num_arms; i++)
+    {
+        mab->arms[i].pulls = 0;
+        mab->arms[i].rewards = 0;
+        mab->arms[i].avg_reward = 0.0;
+        mab->arms[i].ucb_value = 0.0;
+    }
+    
+    mab->num_arms = num_arms;
+    mab->total_pulls = 0;
+    
+    return mab;
+}
+
+// Free a Multi-Armed Bandit
+void mab_free(multi_armed_bandit_t *mab)
+{
+    if (mab)
+    {
+        if (mab->arms)
+            ck_free(mab->arms);
+        ck_free(mab);
+    }
+}
+
+// Select an arm using UCB1 algorithm
+// Returns the index of the selected arm
+u32 mab_select_arm(multi_armed_bandit_t *mab)
+{
+    if (!mab || mab->num_arms == 0)
+        return 0;
+    
+    u32 selected_arm = 0;
+    double max_ucb = -1.0;
+    
+    // UCB1 formula: argmax_i [avg_reward_i + sqrt(2 * ln(total_pulls) / pulls_i)]
+    for (u32 i = 0; i < mab->num_arms; i++)
+    {
+        if (mab->arms[i].pulls == 0)
+        {
+            // If an arm hasn't been pulled, select it (exploration)
+            return i;
+        }
+        
+        // Calculate UCB1 value
+        double exploration_bonus = sqrt(2.0 * log(mab->total_pulls + 1) / mab->arms[i].pulls);
+        mab->arms[i].ucb_value = mab->arms[i].avg_reward + exploration_bonus;
+        
+        if (mab->arms[i].ucb_value > max_ucb)
+        {
+            max_ucb = mab->arms[i].ucb_value;
+            selected_arm = i;
+        }
+    }
+    
+    return selected_arm;
+}
+
+// Update reward for a selected arm
+// reward: 1 if new coverage found, 0 otherwise
+void mab_update_reward(multi_armed_bandit_t *mab, u32 arm_index, u32 reward)
+{
+    if (!mab || arm_index >= mab->num_arms)
+        return;
+    
+    mab_arm_t *arm = &mab->arms[arm_index];
+    
+    // Update statistics
+    arm->pulls++;
+    arm->rewards += reward;
+    arm->avg_reward = (double)arm->rewards / arm->pulls;
+    mab->total_pulls++;
+}
+
+// Get or initialize MAB for a constraint type
+static multi_armed_bandit_t *get_mab_for_constraint(constraint_type_t type)
+{
+    switch (type)
+    {
+        case CONSTRAINT_INTEGER:
+            if (!mab_integer)
+                mab_integer = mab_init(25); // 25 mutation operators
+            return mab_integer;
+            
+        case CONSTRAINT_STRING:
+            if (!mab_string)
+                mab_string = mab_init(20); // 20 mutation operators
+            return mab_string;
+            
+        case CONSTRAINT_ENUM:
+            if (!mab_enum)
+                mab_enum = mab_init(8); // 8 mutation operators
+            return mab_enum;
+            
+        case CONSTRAINT_IP:
+            if (!mab_ip)
+                mab_ip = mab_init(15); // 15 mutation operators
+            return mab_ip;
+            
+        case CONSTRAINT_PATH:
+            if (!mab_path)
+                mab_path = mab_init(15); // 15 mutation operators
+            return mab_path;
+            
+        case CONSTRAINT_HEX:
+            if (!mab_hex)
+                mab_hex = mab_init(12); // 12 mutation operators
+            return mab_hex;
+            
+        default:
+            return NULL;
+    }
+}
+
+// Update reward for the last mutation operator used
+// Call this function after checking if new coverage was found
+// reward: 1 if new coverage found, 0 otherwise
+void mab_update_last_mutation_reward(u32 reward)
+{
+    // Only update if MAB is enabled
+    if (!mab_enabled)
+        return;
+    
+    multi_armed_bandit_t *mab = NULL;
+    
+    switch (last_constraint_type)
+    {
+        case CONSTRAINT_INTEGER:
+            mab = mab_integer;
+            break;
+        case CONSTRAINT_STRING:
+            mab = mab_string;
+            break;
+        case CONSTRAINT_ENUM:
+            mab = mab_enum;
+            break;
+        case CONSTRAINT_IP:
+            mab = mab_ip;
+            break;
+        case CONSTRAINT_PATH:
+            mab = mab_path;
+            break;
+        case CONSTRAINT_HEX:
+            mab = mab_hex;
+            break;
+        default:
+            return;
+    }
+    
+    if (mab)
+    {
+        mab_update_reward(mab, last_selected_operator, reward);
+    }
+}
+
+// Helper functions for format detection
+static int is_email_format(const u8 *buf, u32 len)
+{
+    if (len < 5) return 0;
+    const char *p = (const char *)buf;
+    int has_at = 0, has_dot = 0;
+    for (u32 i = 0; i < len && p[i] != '\0'; i++)
+    {
+        if (p[i] == '@') has_at = 1;
+        if (has_at && p[i] == '.') has_dot = 1;
+    }
+    return has_at && has_dot;
+}
+
+static int is_url_format(const u8 *buf, u32 len)
+{
+    if (len < 7) return 0;
+    const char *p = (const char *)buf;
+    return (strncmp(p, "http://", 7) == 0 || strncmp(p, "https://", 8) == 0 ||
+            strncmp(p, "ftp://", 6) == 0 || strncmp(p, "file://", 7) == 0);
+}
+
+static int is_base64_format(const u8 *buf, u32 len)
+{
+    if (len < 4) return 0;
+    const char *p = (const char *)buf;
+    int valid_chars = 0;
+    for (u32 i = 0; i < len && p[i] != '\0'; i++)
+    {
+        char c = p[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
+            (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=')
+            valid_chars++;
+        else if (c != ' ' && c != '\n' && c != '\r')
+            return 0;
+    }
+    return valid_chars > len * 0.7; // At least 70% valid base64 chars
 }
 
 // Mutate a value according to the constraint
@@ -1806,8 +2362,20 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
             int min = constraint->constraint.integer_range.min;
             int max = constraint->constraint.integer_range.max;
             
-            // Enhanced mutation: 15 strategies
-            int mutation_type = (int)(random() % 15);
+            // Use Multi-Armed Bandit to select mutation operator
+            multi_armed_bandit_t *mab = NULL;
+            int mutation_type = 0;
+            if (mab_enabled && (mab = get_mab_for_constraint(CONSTRAINT_INTEGER)))
+            {
+                mutation_type = (int)mab_select_arm(mab);
+                last_constraint_type = CONSTRAINT_INTEGER;
+                last_selected_operator = mutation_type;
+            }
+            else
+            {
+                // Fallback to random if MAB not enabled or not available
+                mutation_type = (int)(random() % 25);
+            }
             switch (mutation_type)
             {
                 case 0: value += (random() % 10) - 5; break; // Small change
@@ -1822,13 +2390,41 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
                 case 9: value = 0; break; // Zero
                 case 10: value = -1; break; // Negative one
                 case 11: value = 1; break; // One
-                case 12: value = value * 2; break; // Double
-                case 13: value = value / 2; break; // Half
-                case 14: value = value * 10; break; // 10x
+                case 12: value = 2; break; // Two
+                case 13: value = 10; break; // Ten
+                case 14: value = 100; break; // Hundred
+                case 15: value = 1000; break; // Thousand
+                case 16: value = value * 2; break; // Double
+                case 17: value = value / 2; break; // Half
+                case 18: value = value * 10; break; // 10x
+                case 19: value = value + value; break; // Self-add
+                case 20: 
+                    {
+                        long long squared = (long long)value * (long long)value;
+                        value = (squared > max) ? max : (squared < min) ? min : (int)squared;
+                    }
+                    break; // Square (clamped)
+                case 21: 
+                    {
+                        if (value > 0)
+                            value = (int)sqrt((double)value);
+                        else
+                            value = 0;
+                    }
+                    break; // Square root
+                case 22: value = value << 1; break; // Left shift (multiply by 2)
+                case 23: value = value >> 1; break; // Right shift (divide by 2)
+                case 24: value = ~value; break; // Bitwise NOT
             }
             
-            // Clamp to range (except for overflow/underflow tests)
-            if (mutation_type != 7 && mutation_type != 8)
+            // Clamp to range (except for overflow/underflow tests and bitwise operations)
+            if (mutation_type != 7 && mutation_type != 8 && mutation_type != 24)
+            {
+                if (value < min) value = min;
+                if (value > max) value = max;
+            }
+            // For bitwise NOT, clamp after operation
+            if (mutation_type == 24)
             {
                 if (value < min) value = min;
                 if (value > max) value = max;
@@ -1859,35 +2455,98 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
             int min_len = constraint->constraint.string_range.min_len;
             int max_len = constraint->constraint.string_range.max_len;
             
-            // Enhanced mutation: 10 strategies
-            int mutation_type = (int)(random() % 10);
+            // Format-aware mutation: detect format first
+            int is_email = is_email_format(buf + offset, available_len);
+            int is_url = is_url_format(buf + offset, available_len);
+            int is_base64 = is_base64_format(buf + offset, available_len);
+            
+            // Use Multi-Armed Bandit to select mutation operator
+            multi_armed_bandit_t *mab = NULL;
+            int mutation_type = 0;
+            if (mab_enabled && (mab = get_mab_for_constraint(CONSTRAINT_STRING)))
+            {
+                mutation_type = (int)mab_select_arm(mab);
+                last_constraint_type = CONSTRAINT_STRING;
+                last_selected_operator = mutation_type;
+            }
+            else
+            {
+                // Fallback to random if MAB not enabled or not available
+                mutation_type = (int)(random() % 20);
+            }
+            
+            // Format-specific mutations (cases 0-2)
+            if (mutation_type == 0 && is_email)
+            {
+                // Email format mutation
+                if (available_len > 10)
+                {
+                    const char *email_variants[] = {
+                        "test@[127.0.0.1]",
+                        "test@[IPv6::1]",
+                        "a\"@example.com",
+                        "test@example.com",
+                        "verylongemailaddressthatmightexceedlimits@example.com"
+                    };
+                    const char *email = email_variants[random() % 5];
+                    int email_len = strlen(email);
+                    memcpy(buf + offset, email, email_len < available_len ? email_len : available_len);
+                }
+                break;
+            }
+            if (mutation_type == 1 && is_url)
+            {
+                // URL format mutation
+                if (available_len > 15)
+                {
+                    const char *url_variants[] = {
+                        "http://example.com/path%00",
+                        "http://example.com/path<script>",
+                        "http://example.com/%2e%2e/etc/passwd",
+                        "file:///etc/passwd",
+                        "ftp://anonymous:anonymous@example.com"
+                    };
+                    const char *url = url_variants[random() % 5];
+                    int url_len = strlen(url);
+                    memcpy(buf + offset, url, url_len < available_len ? url_len : available_len);
+                }
+                break;
+            }
+            if (mutation_type == 2 && is_base64)
+            {
+                // Base64 format mutation
+                if (available_len > 4)
+                {
+                    const char *base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+                    for (int i = 0; i < available_len && (offset + i) < len; i++)
+                    {
+                        buf[offset + i] = base64_chars[random() % 65];
+                    }
+                }
+                break;
+            }
+            
+            // General string mutations (cases 3-19)
             switch (mutation_type)
             {
-                case 0: // Change random character
+                case 3: // Change random character
                     if (available_len > 0)
                     {
                         int pos = random() % available_len;
                         buf[offset + pos] = 32 + (random() % 95);
                     }
                     break;
-                case 1: // Set to min length
-                    if (min_len < available_len)
+                case 4: // Set to min length
+                    if (min_len > 0 && min_len <= available_len)
                     {
-                        for (int i = min_len; i < available_len && i < len; i++)
+                        memset(buf + offset, 'A', min_len);
+                        if (min_len < available_len)
                         {
-                            buf[offset + i] = ' ';
+                            memset(buf + offset + min_len, '\0', available_len - min_len);
                         }
                     }
                     break;
-                case 2: // Inject special characters
-                    if (available_len > 0)
-                    {
-                        const char *special = "\x00\x01\xff\n\r\t";
-                        int pos = random() % available_len;
-                        buf[offset + pos] = special[random() % 6];
-                    }
-                    break;
-                case 3: // Set to max length (fill with 'A')
+                case 5: // Set to max length (fill with 'A')
                     if (max_len > 0 && max_len <= available_len)
                     {
                         memset(buf + offset, 'A', max_len);
@@ -1897,7 +2556,7 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
                         }
                     }
                     break;
-                case 4: // Overflow test (exceed max length)
+                case 6: // Overflow test (exceed max length)
                     if (available_len > 0)
                     {
                         int overflow_len = max_len + 100;
@@ -1905,16 +2564,16 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
                         memset(buf + offset, 'A', overflow_len);
                     }
                     break;
-                case 5: // Empty string
+                case 7: // Empty string
                     memset(buf + offset, '\0', available_len < len ? available_len : len - offset);
                     break;
-                case 6: // Repeat character pattern
+                case 8: // Repeat character pattern
                     if (available_len > 0)
                     {
                         memset(buf + offset, 'A', available_len < len ? available_len : len - offset);
                     }
                     break;
-                case 7: // Pattern repeat (ABC pattern)
+                case 9: // Pattern repeat (ABC pattern)
                     if (available_len > 0)
                     {
                         const char *pattern = "ABC";
@@ -1925,7 +2584,7 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
                         }
                     }
                     break;
-                case 8: // Extended special characters
+                case 10: // Extended special characters
                     if (available_len > 0)
                     {
                         const char *extended_special = "\x00\x01\x02\x03\xff\xfe\xfd\n\r\t\"'\\<>{}[]()";
@@ -1934,13 +2593,96 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
                         buf[offset + pos] = extended_special[random() % special_len];
                     }
                     break;
-                case 9: // UTF-8 boundary test
+                case 11: // UTF-8 boundary test
                     if (available_len >= 3)
                     {
-                        // Inject invalid UTF-8 sequences
                         const char *invalid_utf8 = "\xc0\xc1\xf5\xff";
                         int pos = random() % (available_len - 2);
                         buf[offset + pos] = invalid_utf8[random() % 4];
+                    }
+                    break;
+                case 12: // Control characters injection
+                    if (available_len > 0)
+                    {
+                        const char *control_chars = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0c\x0e\x0f";
+                        int pos = random() % available_len;
+                        buf[offset + pos] = control_chars[random() % 13];
+                    }
+                    break;
+                case 13: // High byte characters
+                    if (available_len > 0)
+                    {
+                        const char *high_bytes = "\x80\x81\x82\x83\xff\xfe\xfd\xfc";
+                        int pos = random() % available_len;
+                        buf[offset + pos] = high_bytes[random() % 8];
+                    }
+                    break;
+                case 14: // Format string attack patterns
+                    if (available_len > 5)
+                    {
+                        const char *format_strings[] = {
+                            "%s%s%s%s%s",
+                            "%n%n%n%n",
+                            "%x%x%x%x",
+                            "%p%p%p%p"
+                        };
+                        const char *fmt = format_strings[random() % 4];
+                        int fmt_len = strlen(fmt);
+                        memcpy(buf + offset, fmt, fmt_len < available_len ? fmt_len : available_len);
+                    }
+                    break;
+                case 15: // SQL injection patterns
+                    if (available_len > 10)
+                    {
+                        const char *sql_patterns[] = {
+                            "' OR '1'='1",
+                            "'; DROP TABLE--",
+                            "' UNION SELECT--",
+                            "1' OR '1'='1"
+                        };
+                        const char *sql = sql_patterns[random() % 4];
+                        int sql_len = strlen(sql);
+                        memcpy(buf + offset, sql, sql_len < available_len ? sql_len : available_len);
+                    }
+                    break;
+                case 16: // XSS patterns
+                    if (available_len > 10)
+                    {
+                        const char *xss_patterns[] = {
+                            "<script>alert(1)</script>",
+                            "<img src=x onerror=alert(1)>",
+                            "javascript:alert(1)",
+                            "<svg onload=alert(1)>"
+                        };
+                        const char *xss = xss_patterns[random() % 4];
+                        int xss_len = strlen(xss);
+                        memcpy(buf + offset, xss, xss_len < available_len ? xss_len : available_len);
+                    }
+                    break;
+                case 17: // Path traversal in string
+                    if (available_len > 10)
+                    {
+                        const char *traversal = "../../../etc/passwd";
+                        int trav_len = strlen(traversal);
+                        memcpy(buf + offset, traversal, trav_len < available_len ? trav_len : available_len);
+                    }
+                    break;
+                case 18: // Null byte injection
+                    if (available_len > 5)
+                    {
+                        memcpy(buf + offset, "test", 4);
+                        buf[offset + 4] = '\0';
+                        if (available_len > 5)
+                            memcpy(buf + offset + 5, "suffix", available_len - 5 < 6 ? available_len - 5 : 6);
+                    }
+                    break;
+                case 19: // Unicode normalization attacks
+                    if (available_len > 10)
+                    {
+                        // Try to inject confusable Unicode characters
+                        const char *unicode_test = "\xc2\xa0\xe2\x80\x8b\xe2\x80\x8c"; // Non-breaking space, zero-width chars
+                        int unicode_len = strlen(unicode_test);
+                        memcpy(buf + offset, unicode_test, unicode_len < available_len ? unicode_len : available_len);
                     }
                     break;
             }
@@ -1949,11 +2691,24 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
         
         case CONSTRAINT_ENUM:
         {
-            // Enhanced enum mutation: 5 strategies
+            // Enhanced enum mutation: 8 strategies
             int count = constraint->constraint.enum_values.count;
             if (count > 0)
             {
-                int mutation_type = (int)(random() % 5);
+                // Use Multi-Armed Bandit to select mutation operator
+                multi_armed_bandit_t *mab = NULL;
+                int mutation_type = 0;
+                if (mab_enabled && (mab = get_mab_for_constraint(CONSTRAINT_ENUM)))
+                {
+                    mutation_type = (int)mab_select_arm(mab);
+                    last_constraint_type = CONSTRAINT_ENUM;
+                    last_selected_operator = mutation_type;
+                }
+                else
+                {
+                    // Fallback to random if MAB not enabled or not available
+                    mutation_type = (int)(random() % 8);
+                }
                 const char *new_value = NULL;
                 int idx = 0;
                 
@@ -1971,7 +2726,11 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
                         idx = count - 1;
                         new_value = constraint->constraint.enum_values.values[idx];
                         break;
-                    case 3: // Similar value mutation (case variation)
+                    case 3: // Middle value
+                        idx = count / 2;
+                        new_value = constraint->constraint.enum_values.values[idx];
+                        break;
+                    case 4: // Similar value mutation (case variation)
                         idx = random() % count;
                         new_value = constraint->constraint.enum_values.values[idx];
                         // Mutate first character case
@@ -2009,7 +2768,7 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
                             memcpy(buf + offset, new_value, new_len < available_len ? new_len : available_len);
                         }
                         break;
-                    case 4: // Similar value with typo
+                    case 5: // Similar value with typo (add character)
                         idx = random() % count;
                         new_value = constraint->constraint.enum_values.values[idx];
                         if (new_value != NULL)
@@ -2036,9 +2795,63 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
                             }
                         }
                         break;
+                    case 6: // Similar value with typo (remove character)
+                        idx = random() % count;
+                        new_value = constraint->constraint.enum_values.values[idx];
+                        if (new_value != NULL && strlen(new_value) > 1)
+                        {
+                            int new_len = strlen(new_value) - 1;
+                            if (new_len < available_len)
+                            {
+                                memcpy(buf + offset, new_value, new_len);
+                                // Pad with spaces
+                                for (int i = new_len; i < available_len && i < len; i++)
+                                {
+                                    buf[offset + i] = ' ';
+                                }
+                            }
+                            else
+                            {
+                                memcpy(buf + offset, new_value, available_len);
+                            }
+                        }
+                        else if (new_value != NULL)
+                        {
+                            int new_len = strlen(new_value);
+                            memcpy(buf + offset, new_value, new_len < available_len ? new_len : available_len);
+                        }
+                        break;
+                    case 7: // Combine two enum values (if space allows)
+                        if (count >= 2 && available_len > 10)
+                        {
+                            idx = random() % count;
+                            int idx2 = random() % count;
+                            while (idx2 == idx) idx2 = random() % count;
+                            const char *val1 = constraint->constraint.enum_values.values[idx];
+                            const char *val2 = constraint->constraint.enum_values.values[idx2];
+                            int len1 = strlen(val1);
+                            int len2 = strlen(val2);
+                            if (len1 + len2 + 1 < available_len)
+                            {
+                                memcpy(buf + offset, val1, len1);
+                                buf[offset + len1] = '_';
+                                memcpy(buf + offset + len1 + 1, val2, len2 < available_len - len1 - 1 ? len2 : available_len - len1 - 1);
+                            }
+                            else
+                            {
+                                // Fallback to single value
+                                new_value = val1;
+                            }
+                        }
+                        else
+                        {
+                            idx = random() % count;
+                            new_value = constraint->constraint.enum_values.values[idx];
+                        }
+                        break;
                 }
                 
-                if (mutation_type < 3 && new_value != NULL)
+                if (mutation_type < 4 && new_value != NULL)
                 {
                     int new_len = strlen(new_value);
                     if (new_len < available_len)
@@ -2061,8 +2874,19 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
         
         case CONSTRAINT_IP:
         {
-            // Enhanced IP mutation: 10 strategies
-            int mutation_type = (int)(random() % 10);
+            // Enhanced IP mutation: 15 strategies with MAB
+            multi_armed_bandit_t *mab = NULL;
+            int mutation_type = 0;
+            if (mab_enabled && (mab = get_mab_for_constraint(CONSTRAINT_IP)))
+            {
+                mutation_type = (int)mab_select_arm(mab);
+                last_constraint_type = CONSTRAINT_IP;
+                last_selected_operator = mutation_type;
+            }
+            else
+            {
+                mutation_type = (int)(random() % 15);
+            }
             const char *special_ips[] = {
                 "0.0.0.0",           // All zeros
                 "255.255.255.255",   // Broadcast
@@ -2163,14 +2987,72 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
                     memcpy(buf + offset, boundary, boundary_len < available_len ? boundary_len : available_len);
                     break;
                 }
+                case 10: // IP with invalid port separator
+                {
+                    char ip_invalid[32];
+                    snprintf(ip_invalid, 32, "%d.%d.%d.%d#%d", 
+                             (int)(random() % 256), (int)(random() % 256), 
+                             (int)(random() % 256), (int)(random() % 256),
+                             (int)(random() % 65536));
+                    int ip_invalid_len = strlen(ip_invalid);
+                    memcpy(buf + offset, ip_invalid, ip_invalid_len < available_len ? ip_invalid_len : available_len);
+                    break;
+                }
+                case 11: // IPv6 compressed format
+                {
+                    const char *ipv6_compressed = "2001::1";
+                    int ipv6_len = strlen(ipv6_compressed);
+                    memcpy(buf + offset, ipv6_compressed, ipv6_len < available_len ? ipv6_len : available_len);
+                    break;
+                }
+                case 12: // IPv6 full format
+                {
+                    const char *ipv6_full = "2001:0db8:85a3:0000:0000:8a2e:0370:7334";
+                    int ipv6_len = strlen(ipv6_full);
+                    memcpy(buf + offset, ipv6_full, ipv6_len < available_len ? ipv6_len : available_len);
+                    break;
+                }
+                case 13: // Invalid IPv4 segments
+                {
+                    const char *invalid_segments[] = {
+                        "256.256.256.256",
+                        "-1.-1.-1.-1",
+                        "999.999.999.999"
+                    };
+                    const char *invalid = invalid_segments[random() % 3];
+                    int invalid_len = strlen(invalid);
+                    memcpy(buf + offset, invalid, invalid_len < available_len ? invalid_len : available_len);
+                    break;
+                }
+                case 14: // IP with spaces (invalid)
+                {
+                    char ip_spaces[32];
+                    snprintf(ip_spaces, 32, "%d . %d . %d . %d", 
+                             (int)(random() % 256), (int)(random() % 256), 
+                             (int)(random() % 256), (int)(random() % 256));
+                    int ip_spaces_len = strlen(ip_spaces);
+                    memcpy(buf + offset, ip_spaces, ip_spaces_len < available_len ? ip_spaces_len : available_len);
+                    break;
+                }
             }
             break;
         }
         
         case CONSTRAINT_PATH:
         {
-            // Enhanced path mutation: 10 strategies
-            int mutation_type = (int)(random() % 10);
+            // Enhanced path mutation: 15 strategies with MAB
+            multi_armed_bandit_t *mab = NULL;
+            int mutation_type = 0;
+            if (mab_enabled && (mab = get_mab_for_constraint(CONSTRAINT_PATH)))
+            {
+                mutation_type = (int)mab_select_arm(mab);
+                last_constraint_type = CONSTRAINT_PATH;
+                last_selected_operator = mutation_type;
+            }
+            else
+            {
+                mutation_type = (int)(random() % 15);
+            }
             const char *traversal_patterns[] = {
                 "../../../etc/passwd",
                 "..\\..\\..\\windows\\system32",
@@ -2291,14 +3173,72 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
                     }
                     break;
                 }
+                case 10: // UTF-8 encoded traversal
+                {
+                    const char *utf8_traversal = "..%c0%af..%c0%af";
+                    int utf8_len = strlen(utf8_traversal);
+                    memcpy(buf + offset, utf8_traversal, utf8_len < available_len ? utf8_len : available_len);
+                    break;
+                }
+                case 11: // Windows UNC path
+                {
+                    const char *unc_path = "\\\\server\\share\\file";
+                    int unc_len = strlen(unc_path);
+                    memcpy(buf + offset, unc_path, unc_len < available_len ? unc_len : available_len);
+                    break;
+                }
+                case 12: // Very long path (exceed limits)
+                {
+                    if (available_len > 0)
+                    {
+                        int pos = 0;
+                        for (int i = 0; i < 200 && pos < available_len && (offset + pos) < len; i++)
+                        {
+                            if (pos + 4 < available_len)
+                            {
+                                memcpy(buf + offset + pos, "dir/", 4);
+                                pos += 4;
+                            }
+                            else break;
+                        }
+                    }
+                    break;
+                }
+                case 13: // Mixed separators
+                {
+                    const char *mixed = "/path\\to\\file";
+                    int mixed_len = strlen(mixed);
+                    memcpy(buf + offset, mixed, mixed_len < available_len ? mixed_len : available_len);
+                    break;
+                }
+                case 14: // Path with special Unicode
+                {
+                    // Non-breaking space (UTF-8: 0xC2 0xA0)
+                    const unsigned char unicode_bytes[] = { '/', 'p', 'a', 't', 'h', '/', 0xC2, 0xA0, 'f', 'i', 'l', 'e', '\0' };
+                    const char *unicode_path = (const char *)unicode_bytes;
+                    int unicode_len = strlen(unicode_path);
+                    memcpy(buf + offset, unicode_path, unicode_len < available_len ? unicode_len : available_len);
+                    break;
+                }
             }
             break;
         }
         
         case CONSTRAINT_HEX:
         {
-            // Enhanced hex mutation: 8 strategies
-            int mutation_type = (int)(random() % 8);
+            // Enhanced hex mutation: 12 strategies with MAB
+            multi_armed_bandit_t *mab = NULL;
+            int mutation_type = 0;
+            if (mab_enabled && (mab = get_mab_for_constraint(CONSTRAINT_HEX)))
+            {
+                mutation_type = (int)mab_select_arm(mab);
+                last_constraint_type = CONSTRAINT_HEX;
+                last_selected_operator = mutation_type;
+            }
+            else
+            {
+                mutation_type = (int)(random() % 12);
+            }
             const char *hex_chars = "0123456789ABCDEFabcdef";
             const char *special_hex[] = {
                 "00000000",        // All zeros
@@ -2390,6 +3330,53 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
                 case 7: // Empty/null
                     memset(buf + offset, '\0', available_len < len ? available_len : len - offset);
                     break;
+                case 8: // Special hex patterns
+                {
+                    const char *special_patterns[] = {
+                        "0xDEADBEEF",
+                        "0xCAFEBABE",
+                        "0xBAADF00D",
+                        "0xDEADC0DE"
+                    };
+                    const char *pattern = special_patterns[random() % 4];
+                    int pattern_len = strlen(pattern);
+                    memcpy(buf + offset, pattern, pattern_len < available_len ? pattern_len : available_len);
+                    break;
+                }
+                case 9: // Hex with spaces
+                {
+                    if (available_len >= 11)
+                    {
+                        const char *hex_spaces = "FF FF FF FF";
+                        int hex_spaces_len = strlen(hex_spaces);
+                        memcpy(buf + offset, hex_spaces, hex_spaces_len < available_len ? hex_spaces_len : available_len);
+                    }
+                    break;
+                }
+                case 10: // Invalid hex characters
+                {
+                    if (available_len > 0)
+                    {
+                        const char *invalid_hex = "GHIJKLMNOPQRSTUVWXYZ";
+                        for (int i = 0; i < available_len && (offset + i) < len; i++)
+                        {
+                            buf[offset + i] = invalid_hex[i % strlen(invalid_hex)];
+                        }
+                    }
+                    break;
+                }
+                case 11: // Hex with 0X prefix (uppercase)
+                {
+                    if (available_len >= 2)
+                    {
+                        memcpy(buf + offset, "0X", 2);
+                        for (int i = 2; i < available_len && (offset + i) < len; i++)
+                        {
+                            buf[offset + i] = hex_chars[random() % 16];
+                        }
+                    }
+                    break;
+                }
             }
             break;
         }

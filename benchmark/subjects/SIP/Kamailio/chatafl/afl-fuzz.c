@@ -403,7 +403,7 @@ u32 reward_grammar;
 void setup_llm_grammars()
 {
 
-  ACTF("[语法提取]从大模型中提取语法模板...\n");
+  ACTF("[chatafl]从大模型中提取语法模板...\n");
 
   khash_t(consistency_table) *const_table = kh_init(consistency_table);
   char *first_question;
@@ -5644,7 +5644,7 @@ static void show_stats(void)
   banner_pad = (80 - banner_len) / 2;
   memset(tmp, ' ', banner_pad);
 
-  sprintf(tmp + banner_pad, "%s " cLCY VERSION cLGN " (%s)", crash_mode ? cPIN "peruvian were-rabbit" : cYEL "american fuzzy lop", use_banner);
+  sprintf(tmp + banner_pad, "%s " cLCY VERSION cLGN " (%s)", crash_mode ? cPIN "peruvian were-rabbit" : cYEL "chatafl", use_banner);
 
   SAYF("\n%s\n\n", tmp);
 

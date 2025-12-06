@@ -1,0 +1,131 @@
+For the FTP protocol, the client request templates typically include commands such as USER, PASS, LIST, RETR, STOR, QUIT, and others. Below are common FTP client request templates using type constraints where appropriate:
+
+1. USER command (specify username):
+```
+USER: ["USER <<STRING:1-256>>\r\n"]
+```
+
+2. PASS command (specify password):
+```
+PASS: ["PASS <<STRING:1-256>>\r\n"]
+```
+
+3. LIST command (list directory contents, optional path):
+```
+LIST: ["LIST <<PATH>>\r\n"]
+```
+*Note: The path can be empty or a valid path, so you may consider allowing empty string or a path.*
+
+4. RETR command (retrieve a file):
+```
+RETR: ["RETR <<PATH>>\r\n"]
+```
+
+5. STOR command (store/upload a file):
+```
+STOR: ["STOR <<PATH>>\r\n"]
+```
+
+6. QUIT command (close the session):
+```
+QUIT: ["QUIT\r\n"]
+```
+
+7. CWD command (change working directory):
+```
+CWD: ["CWD <<PATH>>\r\n"]
+```
+
+8. PWD command (print working directory):
+```
+PWD: ["PWD\r\n"]
+```
+
+9. TYPE command (set transfer type, e.g., ASCII or Binary):
+```
+TYPE: ["TYPE <<ENUM:A,I>>\r\n"]
+```
+*Where 'A' = ASCII mode, 'I' = Image (binary) mode.*
+
+10. PASV command (enter passive mode):
+```
+PASV: ["PASV\r\n"]
+```
+
+11. PORT command (specify client port for active mode):
+```
+PORT: ["PORT <<INTEGER:0-255>>,<<INTEGER:0-255>>,<<INTEGER:0-255>>,<<INTEGER:0-255>>,<<INTEGER:0-255>>,<<INTEGER:0-255>>\r\n"]
+```
+*The PORT command uses 6 comma-separated integers representing the IP address and port.*
+
+---
+
+These templates cover the most common FTP client requests with appropriate type constraints. If you need templates for additional FTP commands, please let me know!
+Here are additional FTP client request templates using the specified type constraints and the same format as before:
+
+12.  SYST command (get system type):
+```
+SYST: ["SYST\r\n"]
+```
+
+13.  NOOP command (no operation, keep connection alive):
+```
+NOOP: ["NOOP\r\n"]
+```
+
+14.  REST command (restart transfer from a specific offset):
+```
+REST: ["REST <<INTEGER:0-18446744073709551615>>\r\n"]
+```
+*Note: The offset can be a large integer (64-bit unsigned).*
+
+15.  RNFR command (rename from - specify source file):
+```
+RNFR: ["RNFR <<PATH>>\r\n"]
+```
+
+16.  RNTO command (rename to - specify destination file):
+```
+RNTO: ["RNTO <<PATH>>\r\n"]
+```
+
+17.  MKD command (make directory):
+```
+MKD: ["MKD <<PATH>>\r\n"]
+```
+
+18.  RMD command (remove directory):
+```
+RMD: ["RMD <<PATH>>\r\n"]
+```
+
+19.  ABOR command (abort current operation):
+```
+ABOR: ["ABOR\r\n"]
+```
+
+20.  HELP command (request help, optional command name):
+```
+HELP: ["HELP <<STRING:0-256>>\r\n"]
+```
+*Note: The argument is optional; if empty, just "HELP\r\n" can be sent.*
+
+21.  SITE command (site-specific commands, free format):
+```
+SITE: ["SITE <<STRING:1-512>>\r\n"]
+```
+
+22.  FEAT command (request feature list):
+```
+FEAT: ["FEAT\r\n"]
+```
+
+23.  OPTS command (set options for a command):
+```
+OPTS: ["OPTS <<STRING:1-256>> <<STRING:1-256>>\r\n"]
+```
+*Example: OPTS UTF8 ON*
+
+---
+
+If you want templates for any other FTP commands or more details, feel free to ask!

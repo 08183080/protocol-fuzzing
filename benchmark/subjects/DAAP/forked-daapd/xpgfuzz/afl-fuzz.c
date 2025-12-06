@@ -365,6 +365,7 @@ u8 state_aware_mode = 0;
 u8 region_level_mutation = 0;
 u8 state_selection_algo = ROUND_ROBIN, seed_selection_algo = RANDOM_SELECTION;
 u8 false_negative_reduction = 0;
+u8 use_mab_mutation = 0;  // Enable Multi-Armed Bandit for mutation operator selection
 
 /* Track how long we don't observe interesting seeds */
 u32 uninteresting_times = 0;
@@ -4638,8 +4639,15 @@ static u8 save_if_interesting(char **argv, void *mem, u32 len, u8 fault)
     {
       if (crash_mode)
         total_crashes++;
+      // Update MAB reward: no new coverage found
+      if (use_mab_mutation)
+        mab_update_last_mutation_reward(0);
       return 0;
     }
+    
+    // Update MAB reward: new coverage found
+    if (use_mab_mutation)
+      mab_update_last_mutation_reward(1);
 
 #ifndef SIMPLE_FILES
 
@@ -5644,7 +5652,7 @@ static void show_stats(void)
   banner_pad = (80 - banner_len) / 2;
   memset(tmp, ' ', banner_pad);
 
-  sprintf(tmp + banner_pad, "%s " cLCY VERSION cLGN " (%s)", crash_mode ? cPIN "peruvian were-rabbit" : cYEL "american fuzzy lop", use_banner);
+  sprintf(tmp + banner_pad, "%s " cLCY VERSION cLGN " (%s)", crash_mode ? cPIN "peruvian were-rabbit" : cYEL "xpgfuzz", use_banner);
 
   SAYF("\n%s\n\n", tmp);
 
@@ -9452,6 +9460,7 @@ static void usage(u8 *argv0)
        "  -E            - enable state aware mode (see README.md)\n"
        "  -R            - enable region-level mutation operators (see README.md)\n"
        "  -F            - enable false negative reduction mode (see README.md)\n"
+       "  -b            - enable Multi-Armed Bandit (MAB) for mutation operator selection\n"
        "  -c cleanup    - name or full path to the server cleanup script (see README.md)\n"
        "  -q algo       - state selection algorithm (See aflnet.h for all available options)\n"
        "  -s algo       - seed selection algorithm (See aflnet.h for all available options)\n\n"
@@ -10233,7 +10242,7 @@ int main(int argc, char **argv)
   gettimeofday(&tv, &tz);
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
-  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:QN:D:W:w:e:P:KEq:s:RFc:l:")) > 0)
+  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:QN:D:W:w:e:P:KEq:s:RFc:l:b")) > 0)
 
     switch (opt)
     {
@@ -10582,6 +10591,12 @@ int main(int argc, char **argv)
       false_negative_reduction = 1;
       break;
 
+    case 'b': /* Multi-Armed Bandit mutation */
+      if (use_mab_mutation)
+        FATAL("Multiple -b options not supported");
+      use_mab_mutation = 1;
+      break;
+
     case 'c': /* cleanup script */
 
       if (cleanup_script)
@@ -10694,6 +10709,10 @@ int main(int argc, char **argv)
   setup_ipsm();
 
   setup_dirs_fds();
+
+  // Enable MAB if requested
+  if (use_mab_mutation)
+    set_mab_enabled(1);
 
   if (protocol_selected)
   {

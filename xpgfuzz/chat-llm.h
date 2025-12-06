@@ -23,7 +23,7 @@ Similarly 1700 is for the example request in the seed enrichment
 #define HISTORY_PROMPT_LENGTH 1300
 #define EXAMPLE_SEQUENCE_PROMPT_LENGTH 1700
 
-#define TEMPLATE_CONSISTENCY_COUNT 5
+#define TEMPLATE_CONSISTENCY_COUNT 7
 
 // Maximum amount of retries for the state stall
 #define STALL_RETRIES 1
@@ -166,4 +166,5 @@ void mab_free(multi_armed_bandit_t *mab);
 u32 mab_select_arm(multi_armed_bandit_t *mab);
 void mab_update_reward(multi_armed_bandit_t *mab, u32 arm_index, u32 reward);
 void mab_update_last_mutation_reward(u32 reward); // Update reward for last mutation operator
+void set_mab_enabled(u8 enabled); // Enable or disable MAB for mutation operator selection
 #endif // __CHAT_LLM_H

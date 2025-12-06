@@ -1,0 +1,2 @@
+^(?:PAUSE (.*)\r\n)
+(?|(?:CSeq: (.*)\r\n)|(?:User-Agent: (.*)\r\n)|(?:\r\n)|(?:Session: (.*)\r\n))

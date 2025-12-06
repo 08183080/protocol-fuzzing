@@ -1,5 +1,10 @@
 #!/bin/bash  
-  
+
+# Generate image name: xpg-月份-日-{协议}
+MONTH=$(date +%-m)
+DAY=$(date +%-d)
+IMAGE_NAME="xpg-${MONTH}-${DAY}-kamailio"
+
 DIR="./benchmark/subjects/SIP/Kamailio"  
   
 if [ ! -d "$DIR" ]; then  
@@ -21,14 +26,14 @@ cp -r xpgfuzz $DIR/xpgfuzz
 
 echo "构建kamailio Docker镜像..."  
 cd $DIR  
-docker build . -t kamailio --build-arg MAKE_OPT $NO_CACHE  
+docker build . -t $IMAGE_NAME --build-arg MAKE_OPT $NO_CACHE  
   
 echo "kamailio Docker镜像构建完成！"  
   
 # 验证镜像  
-if docker images | grep -q "kamailio"; then  
-    echo "✓ kamailio镜像已成功创建"  
-    docker images | grep kamailio  
+if docker images | grep -q "$IMAGE_NAME"; then  
+    echo "✓ kamailio镜像已成功创建: $IMAGE_NAME"  
+    docker images | grep "$IMAGE_NAME"  
 else  
     echo "✗ kamailio镜像创建失败"  
     exit 1  

@@ -1,0 +1,2 @@
+^(?:PORT <<INTEGER:0-255>>,<<INTEGER:0-255>>,<<INTEGER:0-255>>,<<INTEGER:0-255>>,<<INTEGER:0-255>>,(.*)\r\n)
+(.+)

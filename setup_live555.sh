@@ -1,5 +1,10 @@
 #!/bin/bash  
-  
+
+# Generate image name: xpg-月份-日-{协议}
+MONTH=$(date +%-m)
+DAY=$(date +%-d)
+IMAGE_NAME="xpg-${MONTH}-${DAY}-live555"
+
 LIVE555_DIR="./benchmark/subjects/RTSP/Live555"  
   
 if [ ! -d "$LIVE555_DIR" ]; then  
@@ -20,14 +25,14 @@ cp -r xpgfuzz $LIVE555_DIR/xpgfuzz
 # 构建Live555 Docker镜像  
 echo "构建Live555 Docker镜像..."  
 cd $LIVE555_DIR  
-docker build . -t live555 --build-arg MAKE_OPT $NO_CACHE  
+docker build . -t $IMAGE_NAME --build-arg MAKE_OPT $NO_CACHE  
   
 echo "Live555 Docker镜像构建完成！"  
   
 # 验证镜像  
-if docker images | grep -q "live555"; then  
-    echo "✓ live555镜像已成功创建"  
-    docker images | grep live555  
+if docker images | grep -q "$IMAGE_NAME"; then  
+    echo "✓ live555镜像已成功创建: $IMAGE_NAME"  
+    docker images | grep "$IMAGE_NAME"  
 else  
     echo "✗ live555镜像创建失败"  
     exit 1  

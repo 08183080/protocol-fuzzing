@@ -1,5 +1,9 @@
 #!/bin/bash  
-  
+
+# Generate image name: xpg-月份-日-{协议}
+MONTH=$(date +%-m)
+DAY=$(date +%-d)
+IMAGE_NAME="xpg-${MONTH}-${DAY}-lighttpd1"
 
 DIR="./benchmark/subjects/HTTP/Lighttpd1"  
   
@@ -22,14 +26,14 @@ cp -r xpgfuzz $DIR/xpgfuzz
 
 echo "构建Lighttpd1 Docker镜像..."  
 cd $DIR  
-docker build . -t lighttpd1 --build-arg MAKE_OPT $NO_CACHE  
+docker build . -t $IMAGE_NAME --build-arg MAKE_OPT $NO_CACHE  
   
 echo "lighttpd1 Docker镜像构建完成！"  
   
 # 验证镜像  
-if docker images | grep -q "lighttpd1"; then  
-    echo "✓ Lighttpd1镜像已成功创建"  
-    docker images | grep Lighttpd1  
+if docker images | grep -q "$IMAGE_NAME"; then  
+    echo "✓ Lighttpd1镜像已成功创建: $IMAGE_NAME"  
+    docker images | grep "$IMAGE_NAME"  
 else  
     echo "✗ Lighttpd1镜像创建失败"  
     exit 1  

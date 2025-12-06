@@ -1,0 +1,185 @@
+For the RTSP protocol, the client request templates with appropriate type constraints are as follows:
+
+1. **DESCRIBE**  
+```
+DESCRIBE: [
+  "DESCRIBE <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "Accept: <<ENUM:application/sdp,application/x-rtsp-tunnelled>>\r\n",
+  "\r\n"
+]
+```
+
+2. **OPTIONS**  
+```
+OPTIONS: [
+  "OPTIONS <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "\r\n"
+]
+```
+
+3. **SETUP**  
+```
+SETUP: [
+  "SETUP <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "Transport: <<STRING:1-256>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "\r\n"
+]
+```
+
+4. **PLAY**  
+```
+PLAY: [
+  "PLAY <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "Session: <<STRING:1-256>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "\r\n"
+]
+```
+
+5. **PAUSE**  
+```
+PAUSE: [
+  "PAUSE <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "Session: <<STRING:1-256>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "\r\n"
+]
+```
+
+6. **TEARDOWN**  
+```
+TEARDOWN: [
+  "TEARDOWN <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "Session: <<STRING:1-256>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "\r\n"
+]
+```
+
+7. **ANNOUNCE**  
+```
+ANNOUNCE: [
+  "ANNOUNCE <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "Content-Type: <<STRING:1-256>>\r\n",
+  "Content-Length: <<INTEGER:0-65535>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "\r\n",
+  "<<VALUE>>"
+]
+```
+
+8. **RECORD**  
+```
+RECORD: [
+  "RECORD <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "Session: <<STRING:1-256>>\r\n",
+  "Range: <<STRING:1-256>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "\r\n"
+]
+```
+
+9. **GET_PARAMETER**  
+```
+GET_PARAMETER: [
+  "GET_PARAMETER <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "Session: <<STRING:1-256>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "\r\n"
+]
+```
+
+10. **SET_PARAMETER**  
+```
+SET_PARAMETER: [
+  "SET_PARAMETER <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "Session: <<STRING:1-256>>\r\n",
+  "Content-Type: <<STRING:1-256>>\r\n",
+  "Content-Length: <<INTEGER:0-65535>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "\r\n",
+  "<<VALUE>>"
+]
+```
+
+---
+
+**Notes:**  
+- `<<PATH>>` is used for the request URI path.  
+- `CSeq` is always an integer between 1 and 65535.  
+- `User-Agent` is a string between 1 and 256 characters.  
+- `Session` identifiers are strings between 1 and 256 characters.  
+- `Content-Length` is an integer between 0 and 65535.  
+- `Content-Type` and `Transport` headers are strings constrained to 1-256 characters.  
+- `Range` header is a string (e.g., "npt=0-") constrained to 1-256 characters.  
+- `Accept` header in DESCRIBE is enumerated as specified.  
+- `<<VALUE>>` is used for message bodies where applicable.
+For the RTSP protocol, here are additional client request templates with appropriate type constraints, following the same format as before:
+
+11. **REDIRECT**  
+```
+REDIRECT: [
+  "REDIRECT <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "Location: <<STRING:1-256>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "\r\n"
+]
+```
+
+12. **SETUP (with optional Session header)**  
+```
+SETUP_WITH_SESSION: [
+  "SETUP <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "Transport: <<STRING:1-256>>\r\n",
+  "Session: <<STRING:1-256>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "\r\n"
+]
+```
+
+13. **PLAY (with Range header optional)**  
+```
+PLAY_WITH_RANGE: [
+  "PLAY <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "Session: <<STRING:1-256>>\r\n",
+  "Range: <<STRING:1-256>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "\r\n"
+]
+```
+
+14. **OPTIONS (with Public header optional)**  
+```
+OPTIONS_WITH_PUBLIC: [
+  "OPTIONS <<PATH>>\r\n",
+  "CSeq: <<INTEGER:1-65535>>\r\n",
+  "User-Agent: <<STRING:1-256>>\r\n",
+  "Public: <<STRING:1-256>>\r\n",
+  "\r\n"
+]
+```
+
+---
+
+### Notes:
+- The above templates include some common optional headers that may appear in RTSP requests.
+- Headers like `Session`, `Range`, and `Public` are included where applicable and constrained as strings of length 1 to 256.
+- The base templates for these methods without optional headers were provided earlier; these are variants including additional headers often used in practice.
+
+If you need templates for any other RTSP methods or specific header combinations, please let me know!

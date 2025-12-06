@@ -1,0 +1,2 @@
+^(?:SET_PARAMETER (.*)\r\n)
+(?|(?:User-Agent: (.*)\r\n)|(?:Session: (.*)\r\n)|(?:CSeq: (.*)\r\n)|(?:Content-Length: (.*)\r\n)|(?:\r\n)|(?:Content-Type: (.*)\r\n))

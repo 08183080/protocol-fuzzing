@@ -1,0 +1,2 @@
+^(?:DESCRIBE (.*)\r\n)
+(?|(?:CSeq: (.*)\r\n)|(?:User-Agent: (.*)\r\n)|(?:Accept: (.*)\r\n)|(?:\r\n))

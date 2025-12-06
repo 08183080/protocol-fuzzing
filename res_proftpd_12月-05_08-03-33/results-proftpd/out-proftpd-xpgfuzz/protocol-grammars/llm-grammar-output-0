@@ -1,0 +1,160 @@
+For the FTP protocol, here are the client request templates using type constraints where appropriate. FTP commands generally consist of a command keyword followed by optional parameters such as file paths, usernames, passwords, or numeric values.
+
+1. USER (specify username)  
+```
+USER: ["USER <<STRING:1-256>>\r\n"]
+```
+
+2. PASS (specify password)  
+```
+PASS: ["PASS <<STRING:1-256>>\r\n"]
+```
+
+3. CWD (change working directory)  
+```
+CWD: ["CWD <<PATH>>\r\n"]
+```
+
+4. PWD (print working directory)  
+```
+PWD: ["PWD\r\n"]
+```
+
+5. LIST (list files/directories)  
+```
+LIST: ["LIST\r\n"]
+```
+
+6. RETR (retrieve/download a file)  
+```
+RETR: ["RETR <<PATH>>\r\n"]
+```
+
+7. STOR (store/upload a file)  
+```
+STOR: ["STOR <<PATH>>\r\n"]
+```
+
+8. DELE (delete a file)  
+```
+DELE: ["DELE <<PATH>>\r\n"]
+```
+
+9. MKD (make directory)  
+```
+MKD: ["MKD <<PATH>>\r\n"]
+```
+
+10. RMD (remove directory)  
+```
+RMD: ["RMD <<PATH>>\r\n"]
+```
+
+11. QUIT (close connection)  
+```
+QUIT: ["QUIT\r\n"]
+```
+
+12. TYPE (set transfer type)  
+```
+TYPE: ["TYPE <<ENUM:A,I>>\r\n"]
+```
+(Note: 'A' for ASCII mode, 'I' for Image/binary mode)
+
+13. PORT (specify client data port)  
+```
+PORT: ["PORT <<STRING:7-15>>\r\n"]
+```
+(Note: The PORT command parameter is usually in the format "h1,h2,h3,h4,p1,p2" representing IP and port; here we use STRING with length constraints.)
+
+14. PASV (enter passive mode)  
+```
+PASV: ["PASV\r\n"]
+```
+
+15. NOOP (no operation)  
+```
+NOOP: ["NOOP\r\n"]
+```
+
+These templates cover the most common FTP client requests with appropriate type constraints. If you need templates for additional FTP commands, please let me know!
+Here are additional FTP client request templates using type constraints in the same format as before:
+
+16. RNFR (rename from - specify the source file/path)  
+```
+RNFR: ["RNFR <<PATH>>\r\n"]
+```
+
+17. RNTO (rename to - specify the destination file/path)  
+```
+RNTO: ["RNTO <<PATH>>\r\n"]
+```
+
+18. ABOR (abort the previous FTP service command)  
+```
+ABOR: ["ABOR\r\n"]
+```
+
+19. SYST (request system type)  
+```
+SYST: ["SYST\r\n"]
+```
+
+20. FEAT (request feature list)  
+```
+FEAT: ["FEAT\r\n"]
+```
+
+21. OPTS (set options for a command)  
+```
+OPTS: ["OPTS <<STRING:1-256>>\r\n"]
+```
+
+22. AUTH (authentication mechanism)  
+```
+AUTH: ["AUTH <<STRING:1-256>>\r\n"]
+```
+
+23. PBSZ (protection buffer size)  
+```
+PBSZ: ["PBSZ <<INTEGER:0-65535>\r\n"]
+```
+
+24. PROT (data channel protection level)  
+```
+PROT: ["PROT <<ENUM:C,P,S,E>>\r\n"]
+```
+(Note: C=Clear, P=Private, S=Safe, E=Confidential)
+
+25. REST (restart transfer at a specific offset)  
+```
+REST: ["REST <<INTEGER:0-4294967295>>\r\n"]
+```
+
+26. SITE (site-specific commands)  
+```
+SITE: ["SITE <<STRING:1-256>>\r\n"]
+```
+
+27. STAT (status of the server or a file)  
+```
+STAT: ["STAT\r\n"]
+```
+or with a path parameter:  
+```
+STAT: ["STAT <<PATH>>\r\n"]
+```
+
+28. MODE (set transfer mode)  
+```
+MODE: ["MODE <<ENUM:S,B,C>>\r\n"]
+```
+(Note: S=Stream, B=Block, C=Compressed)
+
+29. STRU (set file structure)  
+```
+STRU: ["STRU <<ENUM:F,R,P>>\r\n"]
+```
+(Note: F=File, R=Record, P=Page)
+
+If you need more specific commands or further details, feel free to ask!

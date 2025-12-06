@@ -1,0 +1,20 @@
+USER ubuntu
+PASR ubuntu
+PASS ubuntu
+JP ubuntu
+PASS ubuntu
+JP
+1025,0
+MLST 4
+sญญญญญญญญญญญญญญญญญญญญญญญญญญญญญญญฏญญญญญญญญญญญญญญญญญญญญ/
+STAT
+LIษษษษษษษษษษษษษT /
+QUIT๘	ACCT
+REIN
+SMNT
+FEAT
+NOOP
+HELP
+STAT
+STRU
+QUIT

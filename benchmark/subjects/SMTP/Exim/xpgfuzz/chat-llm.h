@@ -23,7 +23,7 @@ Similarly 1700 is for the example request in the seed enrichment
 #define HISTORY_PROMPT_LENGTH 1300
 #define EXAMPLE_SEQUENCE_PROMPT_LENGTH 1700
 
-#define TEMPLATE_CONSISTENCY_COUNT 5
+#define TEMPLATE_CONSISTENCY_COUNT 7
 
 // Maximum amount of retries for the state stall
 #define STALL_RETRIES 1
@@ -139,9 +139,32 @@ message_set_list message_combinations(khash_t(strSet)* sequence, int size);
 struct queue_entry *llm_guided_mutation(struct queue_entry *seed);  
 char *construct_prompt_for_seed_mutation(char *protocol_name, char *seed_content);
 
+// Multi-Armed Bandit (MAB) for mutation operator selection
+// UCB1 algorithm implementation
+typedef struct {
+    u32 pulls;          // Number of times this operator has been selected
+    u32 rewards;        // Total rewards (e.g., new coverage found)
+    double avg_reward;  // Average reward
+    double ucb_value;   // UCB1 upper confidence bound value
+} mab_arm_t;
+
+typedef struct {
+    mab_arm_t *arms;    // Array of arms (one per mutation operator)
+    u32 num_arms;       // Number of mutation operators
+    u32 total_pulls;    // Total number of pulls across all arms
+} multi_armed_bandit_t;
+
 // Type constraint functions
 type_constraint_t *parse_constraint(const char *str);
 void free_constraint(type_constraint_t *constraint);
 char *generate_value_by_constraint(type_constraint_t *constraint);
 void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint, u32 offset);
+
+// Multi-Armed Bandit functions for mutation operator selection
+multi_armed_bandit_t *mab_init(u32 num_arms);
+void mab_free(multi_armed_bandit_t *mab);
+u32 mab_select_arm(multi_armed_bandit_t *mab);
+void mab_update_reward(multi_armed_bandit_t *mab, u32 arm_index, u32 reward);
+void mab_update_last_mutation_reward(u32 reward); // Update reward for last mutation operator
+void set_mab_enabled(u8 enabled); // Enable or disable MAB for mutation operator selection
 #endif // __CHAT_LLM_H

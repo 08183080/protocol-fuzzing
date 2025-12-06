@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <arpa/inet.h>
+#include <math.h>
 
 #include "chat-llm.h"
 #include "alloc-inl.h"
@@ -233,8 +234,16 @@ char *construct_prompt_for_templates(char *protocol_name, char **final_msg)
                                 "\\\"User-Agent: <<STRING:1-512>>\\\\r\\\\n\\\","
                                 "\\\"\\\\r\\\\n\\\"]";  //零样本学习
 
+    char *consistency_guidelines = "\\n\\nCRITICAL CONSISTENCY REQUIREMENTS:\\n"
+                                   "1. Use the SAME format for the same command across ALL requests\\n"
+                                   "2. If a parameter is optional, ALWAYS include it in the template with the constraint marker\\n"
+                                   "3. Maintain consistent spacing: use exactly ONE space between command and parameters\\n"
+                                   "4. Use consistent constraint types for the same field (e.g., always use <<INTEGER:0-255>> not <<STRING:7-15>> for ports)\\n"
+                                   "5. For commands with multiple variants, choose ONE canonical format and use it consistently\\n"
+                                   "6. Enum values should include ALL valid options consistently across all templates";
+
     char *msg = NULL;
-    asprintf(&msg, "%s\\n%s\\nFor the %s protocol, all of client request templates are (use type constraints where appropriate):", prompt_rtsp_example, prompt_http_example, protocol_name);
+    asprintf(&msg, "%s\\n%s%s\\nFor the %s protocol, all of client request templates are (use type constraints where appropriate):", prompt_rtsp_example, prompt_http_example, consistency_guidelines, protocol_name);
     *final_msg = msg;
     /** Format of prompt_grammars
     prompt_grammars = [
@@ -244,7 +253,7 @@ char *construct_prompt_for_templates(char *protocol_name, char **final_msg)
      **/
     char *prompt_grammars = NULL;
 
-    asprintf(&prompt_grammars, "[{\"role\": \"system\", \"content\": \"You are a helpful assistant specialized in network protocol analysis. Always use type constraints in templates when you can infer the value type from the protocol specification.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", msg);
+    asprintf(&prompt_grammars, "[{\"role\": \"system\", \"content\": \"You are a helpful assistant specialized in network protocol analysis. Always use type constraints in templates when you can infer the value type from the protocol specification. CRITICAL: Maintain strict format consistency across all templates - use identical formats for the same commands and fields.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", msg);
 
     return prompt_grammars;
 }
@@ -650,6 +659,7 @@ static type_constraint_t *extract_constraint_from_match(const char *str, PCRE2_S
 
 int parse_pattern(pcre2_code *replacer, pcre2_match_data *match_data, const char *str, size_t len, char *pattern, type_constraint_t **out_constraint)
 {
+    size_t pattern_start_len = strlen(pattern);
     strcat(pattern, "(?:");
     // offset == 3;
     int rc = pcre2_match(replacer, str, len, 0, 0, match_data, NULL);
@@ -665,8 +675,10 @@ int parse_pattern(pcre2_code *replacer, pcre2_match_data *match_data, const char
             // printf("Matching error %d\n", rc);
             break;
         }
-        pcre2_match_data_free(match_data);
-        pcre2_code_free(replacer);
+        // Restore pattern to original state for fault tolerance
+        pattern[pattern_start_len] = '\0';
+        // Don't free match_data and replacer here - they are managed by caller
+        // This allows fault-tolerant processing to continue with other fields
         if (out_constraint) *out_constraint = NULL;
         return 0;
     }
@@ -755,6 +767,9 @@ pattern_with_constraints_t *get_pattern_constraints(pcre2_code **patterns)
     return kh_value(pattern_constraints_storage, k);
 }
 
+// Forward declaration
+static char *normalize_field_string(const char *field_str);
+
 // If successful, puts 2 patterns in the patterns array, the first one is the header, the second is the fields
 // Else returns an array with the first element being NULL
 char *extract_message_pattern(const char *header_str, khash_t(field_table) * field_table, pcre2_code **patterns, int debug_file, const char *debug_file_name)
@@ -829,9 +844,15 @@ char *extract_message_pattern(const char *header_str, khash_t(field_table) * fie
     strcat(fields_pattern, "(?|");
     for (khiter_t field_t_iter = kh_begin(field_table); field_t_iter != kh_end(field_table); ++field_t_iter)
     {
-        if (!kh_exist(field_table, field_t_iter) || kh_value(field_table, field_t_iter) < (TEMPLATE_CONSISTENCY_COUNT / 2 + (TEMPLATE_CONSISTENCY_COUNT % 2)))
+        // Lower threshold: require only 2 occurrences (40% instead of 60%)
+        // This allows more fields to pass the consistency check
+        if (!kh_exist(field_table, field_t_iter) || kh_value(field_table, field_t_iter) < 2)
             continue;
 
+        // Save current pattern state for fault tolerance
+        size_t pattern_save_len = strlen(fields_pattern);
+        
+        // Add separator before attempting to parse
         if (!first)
         {
             strcat(fields_pattern, "|");
@@ -848,28 +869,29 @@ char *extract_message_pattern(const char *header_str, khash_t(field_table) * fie
         str++;
         size_t len = strlen(str) - 1;
         
+        // Try to normalize the field string first to merge similar formats
+        char *normalized_str = normalize_field_string(str);
+        const char *str_to_parse = normalized_str ? normalized_str : str;
+        size_t parse_len = normalized_str ? strlen(normalized_str) : len;
+        
         type_constraint_t *field_constraint = NULL;
-        int matched = parse_pattern(replacer, match_data, str, len, fields_pattern, &field_constraint);
+        int matched = parse_pattern(replacer, match_data, str_to_parse, parse_len, fields_pattern, &field_constraint);
+        
+        if (normalized_str) ck_free(normalized_str);
         json_object_put(field_v);
+        
+        // Fault-tolerant: restore pattern state if parsing fails, but continue with others
         if (!matched)
         {
-            patterns[0] = NULL;
-            // Free constraints collected so far
-            if (header_constraints) {
-                for (int i = 0; i < header_constraint_count; i++) {
-                    free_constraint(header_constraints[i]);
-                }
-                ck_free(header_constraints);
+            // Restore pattern to saved state
+            fields_pattern[pattern_save_len] = '\0';
+            // Restore first flag if this was the first field attempt
+            if (pattern_save_len == 3) // Only "(?|" was there
+            {
+                first = 1;
             }
-            if (field_constraints) {
-                for (int i = 0; i < field_constraint_count; i++) {
-                    if (field_constraints[i]) free_constraint(field_constraints[i]);
-                }
-                ck_free(field_constraints);
-            }
-            pcre2_match_data_free(match_data);
-            pcre2_code_free(replacer);
-            return NULL;
+            if (field_constraint) free_constraint(field_constraint);
+            continue;
         }
         
         // Store field constraint if found
@@ -1149,6 +1171,50 @@ char *unescape_string(const char *input)
 
     output[j] = '\0'; // Add null-terminator to the output string
     return output;
+}
+
+// Normalize field string format: remove extra spaces, standardize format
+// This helps merge similar field formats that differ only in whitespace
+static char *normalize_field_string(const char *field_str)
+{
+    if (!field_str) return NULL;
+    
+    size_t len = strlen(field_str);
+    char *normalized = (char *)ck_alloc(len + 1);
+    if (!normalized) return NULL;
+    
+    int i = 0, j = 0;
+    int last_was_space = 0;
+    
+    // Remove leading whitespace
+    while (i < len && (field_str[i] == ' ' || field_str[i] == '\t'))
+        i++;
+    
+    // Normalize: collapse multiple spaces to single space
+    while (i < len)
+    {
+        if (field_str[i] == ' ' || field_str[i] == '\t')
+        {
+            if (!last_was_space && j > 0 && normalized[j-1] != '\r' && normalized[j-1] != '\n')
+            {
+                normalized[j++] = ' ';
+                last_was_space = 1;
+            }
+        }
+        else
+        {
+            normalized[j++] = field_str[i];
+            last_was_space = 0;
+        }
+        i++;
+    }
+    
+    // Remove trailing whitespace
+    while (j > 0 && (normalized[j-1] == ' ' || normalized[j-1] == '\t'))
+        j--;
+    
+    normalized[j] = '\0';
+    return normalized;
 }
 
 void write_new_seeds(char *enriched_file, char *contents)
@@ -1783,6 +1849,162 @@ char *generate_value_by_constraint(type_constraint_t *constraint)
     }
 }
 
+// ============================================================================
+// Multi-Armed Bandit (MAB) Implementation for Mutation Operator Selection
+// ============================================================================
+
+// Global MAB instances for different constraint types
+// These are initialized on first use
+static multi_armed_bandit_t *mab_integer = NULL;  // 15 operators for INTEGER
+static multi_armed_bandit_t *mab_string = NULL;   // 10 operators for STRING
+static multi_armed_bandit_t *mab_enum = NULL;     // 5 operators for ENUM
+
+// Track last selected operator for feedback update
+static constraint_type_t last_constraint_type = CONSTRAINT_NONE;
+static u32 last_selected_operator = 0;
+
+// Initialize a Multi-Armed Bandit with specified number of arms
+multi_armed_bandit_t *mab_init(u32 num_arms)
+{
+    multi_armed_bandit_t *mab = (multi_armed_bandit_t *)ck_alloc(sizeof(multi_armed_bandit_t));
+    if (!mab)
+        return NULL;
+    
+    mab->arms = (mab_arm_t *)ck_alloc(num_arms * sizeof(mab_arm_t));
+    if (!mab->arms)
+    {
+        ck_free(mab);
+        return NULL;
+    }
+    
+    // Initialize all arms
+    for (u32 i = 0; i < num_arms; i++)
+    {
+        mab->arms[i].pulls = 0;
+        mab->arms[i].rewards = 0;
+        mab->arms[i].avg_reward = 0.0;
+        mab->arms[i].ucb_value = 0.0;
+    }
+    
+    mab->num_arms = num_arms;
+    mab->total_pulls = 0;
+    
+    return mab;
+}
+
+// Free a Multi-Armed Bandit
+void mab_free(multi_armed_bandit_t *mab)
+{
+    if (mab)
+    {
+        if (mab->arms)
+            ck_free(mab->arms);
+        ck_free(mab);
+    }
+}
+
+// Select an arm using UCB1 algorithm
+// Returns the index of the selected arm
+u32 mab_select_arm(multi_armed_bandit_t *mab)
+{
+    if (!mab || mab->num_arms == 0)
+        return 0;
+    
+    u32 selected_arm = 0;
+    double max_ucb = -1.0;
+    
+    // UCB1 formula: argmax_i [avg_reward_i + sqrt(2 * ln(total_pulls) / pulls_i)]
+    for (u32 i = 0; i < mab->num_arms; i++)
+    {
+        if (mab->arms[i].pulls == 0)
+        {
+            // If an arm hasn't been pulled, select it (exploration)
+            return i;
+        }
+        
+        // Calculate UCB1 value
+        double exploration_bonus = sqrt(2.0 * log(mab->total_pulls + 1) / mab->arms[i].pulls);
+        mab->arms[i].ucb_value = mab->arms[i].avg_reward + exploration_bonus;
+        
+        if (mab->arms[i].ucb_value > max_ucb)
+        {
+            max_ucb = mab->arms[i].ucb_value;
+            selected_arm = i;
+        }
+    }
+    
+    return selected_arm;
+}
+
+// Update reward for a selected arm
+// reward: 1 if new coverage found, 0 otherwise
+void mab_update_reward(multi_armed_bandit_t *mab, u32 arm_index, u32 reward)
+{
+    if (!mab || arm_index >= mab->num_arms)
+        return;
+    
+    mab_arm_t *arm = &mab->arms[arm_index];
+    
+    // Update statistics
+    arm->pulls++;
+    arm->rewards += reward;
+    arm->avg_reward = (double)arm->rewards / arm->pulls;
+    mab->total_pulls++;
+}
+
+// Get or initialize MAB for a constraint type
+static multi_armed_bandit_t *get_mab_for_constraint(constraint_type_t type)
+{
+    switch (type)
+    {
+        case CONSTRAINT_INTEGER:
+            if (!mab_integer)
+                mab_integer = mab_init(15); // 15 mutation operators
+            return mab_integer;
+            
+        case CONSTRAINT_STRING:
+            if (!mab_string)
+                mab_string = mab_init(10); // 10 mutation operators
+            return mab_string;
+            
+        case CONSTRAINT_ENUM:
+            if (!mab_enum)
+                mab_enum = mab_init(5); // 5 mutation operators
+            return mab_enum;
+            
+        default:
+            return NULL;
+    }
+}
+
+// Update reward for the last mutation operator used
+// Call this function after checking if new coverage was found
+// reward: 1 if new coverage found, 0 otherwise
+void mab_update_last_mutation_reward(u32 reward)
+{
+    multi_armed_bandit_t *mab = NULL;
+    
+    switch (last_constraint_type)
+    {
+        case CONSTRAINT_INTEGER:
+            mab = mab_integer;
+            break;
+        case CONSTRAINT_STRING:
+            mab = mab_string;
+            break;
+        case CONSTRAINT_ENUM:
+            mab = mab_enum;
+            break;
+        default:
+            return;
+    }
+    
+    if (mab)
+    {
+        mab_update_reward(mab, last_selected_operator, reward);
+    }
+}
+
 // Mutate a value according to the constraint
 void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint, u32 offset)
 {
@@ -1806,8 +2028,20 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
             int min = constraint->constraint.integer_range.min;
             int max = constraint->constraint.integer_range.max;
             
-            // Enhanced mutation: 15 strategies
-            int mutation_type = (int)(random() % 15);
+            // Use Multi-Armed Bandit to select mutation operator
+            multi_armed_bandit_t *mab = get_mab_for_constraint(CONSTRAINT_INTEGER);
+            int mutation_type = 0;
+            if (mab)
+            {
+                mutation_type = (int)mab_select_arm(mab);
+                last_constraint_type = CONSTRAINT_INTEGER;
+                last_selected_operator = mutation_type;
+            }
+            else
+            {
+                // Fallback to random if MAB not available
+                mutation_type = (int)(random() % 15);
+            }
             switch (mutation_type)
             {
                 case 0: value += (random() % 10) - 5; break; // Small change
@@ -1859,8 +2093,20 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
             int min_len = constraint->constraint.string_range.min_len;
             int max_len = constraint->constraint.string_range.max_len;
             
-            // Enhanced mutation: 10 strategies
-            int mutation_type = (int)(random() % 10);
+            // Use Multi-Armed Bandit to select mutation operator
+            multi_armed_bandit_t *mab = get_mab_for_constraint(CONSTRAINT_STRING);
+            int mutation_type = 0;
+            if (mab)
+            {
+                mutation_type = (int)mab_select_arm(mab);
+                last_constraint_type = CONSTRAINT_STRING;
+                last_selected_operator = mutation_type;
+            }
+            else
+            {
+                // Fallback to random if MAB not available
+                mutation_type = (int)(random() % 10);
+            }
             switch (mutation_type)
             {
                 case 0: // Change random character
@@ -1953,7 +2199,20 @@ void mutate_value_by_constraint(u8 *buf, u32 len, type_constraint_t *constraint,
             int count = constraint->constraint.enum_values.count;
             if (count > 0)
             {
-                int mutation_type = (int)(random() % 5);
+                // Use Multi-Armed Bandit to select mutation operator
+                multi_armed_bandit_t *mab = get_mab_for_constraint(CONSTRAINT_ENUM);
+                int mutation_type = 0;
+                if (mab)
+                {
+                    mutation_type = (int)mab_select_arm(mab);
+                    last_constraint_type = CONSTRAINT_ENUM;
+                    last_selected_operator = mutation_type;
+                }
+                else
+                {
+                    // Fallback to random if MAB not available
+                    mutation_type = (int)(random() % 5);
+                }
                 const char *new_value = NULL;
                 int idx = 0;
                 

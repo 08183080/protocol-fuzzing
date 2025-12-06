@@ -13,12 +13,20 @@ DELETE=$9
 
 WORKDIR="/home/ubuntu/experiments"
 
+# Generate container name: xpg-月份-日-{协议}-{fuzzer}
+# Extract protocol name from DOCIMAGE (e.g., xpg-12-5-lighttpd1 -> lighttpd1)
+PROTOCOL=$(echo $DOCIMAGE | sed 's/^xpg-[0-9]*-[0-9]*-//')
+MONTH=$(date +%-m)
+DAY=$(date +%-d)
+CONTAINER_PREFIX="xpg-${MONTH}-${DAY}-${PROTOCOL}-${FUZZER}"
+
 #keep all container ids
 cids=()
 
 #create one container for each run
 for i in $(seq 1 $RUNS); do
-  id=$(docker run --cpus=1 -d -it $DOCIMAGE /bin/bash -c "cd ${WORKDIR} && run ${FUZZER} ${OUTDIR} '${OPTIONS}' ${TIMEOUT} ${SKIPCOUNT}")
+  CONTAINER_NAME="${CONTAINER_PREFIX}-${i}"
+  id=$(docker run --name $CONTAINER_NAME --cpus=1 -d -it $DOCIMAGE /bin/bash -c "cd ${WORKDIR} && run ${FUZZER} ${OUTDIR} '${OPTIONS}' ${TIMEOUT} ${SKIPCOUNT}")
   cids+=(${id::12}) #store only the first 12 characters of a container ID
 done
 

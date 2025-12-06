@@ -1,0 +1,2 @@
+^(?:SETUP (.*)\r\n)
+(?|(?:User-Agent: (.*)\r\n)|(?:Session: (.*)\r\n)|(?:Transport: (.*)\r\n)|(?:CSeq: (.*)\r\n)|(?:\r\n)|(?:Transport: (.*)\r\n))

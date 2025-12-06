@@ -1,0 +1,152 @@
+For the FTP protocol, here are the client request templates using type constraints where appropriate. FTP commands generally consist of a command keyword followed by optional parameters such as file paths, usernames, passwords, or numeric values.
+
+1. USER (specify username)  
+```
+USER: ["USER <<STRING:1-256>>\r\n"]
+```
+
+2. PASS (specify password)  
+```
+PASS: ["PASS <<STRING:1-256>>\r\n"]
+```
+
+3. CWD (change working directory)  
+```
+CWD: ["CWD <<PATH>>\r\n"]
+```
+
+4. PWD (print working directory)  
+```
+PWD: ["PWD\r\n"]
+```
+
+5. LIST (list files/directories)  
+```
+LIST: ["LIST <<PATH>>\r\n"]
+```
+(Note: The path parameter is optional; if omitted, it lists the current directory.)
+
+6. RETR (retrieve/download a file)  
+```
+RETR: ["RETR <<PATH>>\r\n"]
+```
+
+7. STOR (store/upload a file)  
+```
+STOR: ["STOR <<PATH>>\r\n"]
+```
+
+8. DELE (delete a file)  
+```
+DELE: ["DELE <<PATH>>\r\n"]
+```
+
+9. RNFR (rename from - specify source file)  
+```
+RNFR: ["RNFR <<PATH>>\r\n"]
+```
+
+10. RNTO (rename to - specify destination file)  
+```
+RNTO: ["RNTO <<PATH>>\r\n"]
+```
+
+11. QUIT (close connection)  
+```
+QUIT: ["QUIT\r\n"]
+```
+
+12. TYPE (set transfer type)  
+```
+TYPE: ["TYPE <<ENUM:A,I>>\r\n"]
+```
+(A = ASCII mode, I = Image/binary mode)
+
+13. PORT (specify client data port)  
+```
+PORT: ["PORT <<INTEGER:0-255>>,<<INTEGER:0-255>>,<<INTEGER:0-255>>,<<INTEGER:0-255>>,<<INTEGER:0-255>>,<<INTEGER:0-255>>\r\n"]
+```
+(Format: h1,h2,h3,h4,p1,p2 where h1-h4 are IP octets and p1,p2 specify port)
+
+14. PASV (enter passive mode)  
+```
+PASV: ["PASV\r\n"]
+```
+
+15. SYST (get system type)  
+```
+SYST: ["SYST\r\n"]
+```
+
+16. NOOP (no operation)  
+```
+NOOP: ["NOOP\r\n"]
+```
+
+These templates cover the most common FTP client requests with appropriate type constraints. Let me know if you need templates for additional FTP commands.
+Here are additional FTP client request templates using type constraints in the specified format:
+
+17. APPE (append to a file)  
+```
+APPE: ["APPE <<PATH>>\r\n"]
+```
+
+18. REST (restart transfer at a specific offset)  
+```
+REST: ["REST <<INTEGER:0-4294967295>>\r\n"]
+```
+(Note: Offset is a non-negative 32-bit integer)
+
+19. RNFR (rename from - specify source file)  
+```
+RNFR: ["RNFR <<PATH>>\r\n"]
+```
+
+20. RNTO (rename to - specify destination file)  
+```
+RNTO: ["RNTO <<PATH>>\r\n"]
+```
+
+21. MKD (make directory)  
+```
+MKD: ["MKD <<PATH>>\r\n"]
+```
+
+22. RMD (remove directory)  
+```
+RMD: ["RMD <<PATH>>\r\n"]
+```
+
+23. SITE (site-specific commands)  
+```
+SITE: ["SITE <<STRING:1-512>>\r\n"]
+```
+
+24. FEAT (request feature list)  
+```
+FEAT: ["FEAT\r\n"]
+```
+
+25. OPTS (set options for a command)  
+```
+OPTS: ["OPTS <<STRING:1-256>> <<STRING:1-256>>\r\n"]
+```
+
+26. ALLO (allocate storage space)  
+```
+ALLO: ["ALLO <<INTEGER:0-4294967295>>\r\n"]
+```
+
+27. STRU (set file structure)  
+```
+STRU: ["STRU <<ENUM:F,R,P>>\r\n"]
+```
+(F = File, R = Record, P = Page)
+
+28. MODE (set transfer mode)  
+```
+MODE: ["MODE <<ENUM:Z,S,B>>\r\n"]
+```
+(Z = Compressed, S = Stream, B = Block)
+
+If you need templates for any other FTP commands or further details, feel free to ask!
